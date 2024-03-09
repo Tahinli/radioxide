@@ -16,7 +16,7 @@ async fn alive() -> impl IntoResponse {
     let alive_json = serde_json::json!({
         "status":"Alive",
     });
-    println!("Alive");
+    println!("{}", alive_json);
     (StatusCode::OK, Json(alive_json))
 }
 
@@ -30,6 +30,6 @@ async fn flip_coin() -> impl IntoResponse {
     let coin_json = serde_json::json!({
         "status":flip_status,
     });
-    println!("Coin Flip");
+    println!("{}", coin_json);
     (StatusCode::OK, Json(coin_json))
 }
