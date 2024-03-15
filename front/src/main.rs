@@ -1,14 +1,44 @@
+use std::time::Duration;
+use async_std::task;
 use dioxus::prelude::*;
 use serde::Deserialize;
-
 const SERVER_ADDRESS: &str = "https://localhost:2323";
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-struct ServerStatus{
-    status: String,
+enum Server{
+    Alive,
+    Unstable,
+    Dead,
+}
+impl Server {
+    fn to_string(&mut self) -> String{
+        match self {
+            Self::Alive => {String::from("Alive")},
+            Self::Unstable => {String::from("Unstable")},
+            Self::Dead => {String::from("Dead")},
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-struct CoinStatus{
-    status: String,
+enum Coin{
+    Tail,
+    Head,
+}
+impl Coin {
+    fn to_string(&mut self) -> String {
+        match self {
+            Self::Head => {String::from("Head")},
+            Self::Tail => {String::from("Tail")},
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct  ServerStatus {
+    status:Server,
+}
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct CoinStatus {
+    status:Coin,
 }
 
 fn main() {
@@ -17,8 +47,27 @@ fn main() {
     launch(app);
 }
 
-async fn server_status_check() ->Result<ServerStatus, reqwest::Error> {
-    Ok(reqwest::get(SERVER_ADDRESS).await.unwrap().json::<ServerStatus>().await.unwrap())
+async fn server_status_check(mut server_status:Signal<ServerStatus>) ->ServerStatus {
+    match reqwest::get(SERVER_ADDRESS).await {
+        Ok(response) => {
+            match response.json::<ServerStatus>().await {
+                Ok(_) => {
+                    *server_status.write() = ServerStatus{status:Server::Alive,};
+                    ServerStatus{status:Server::Alive,}
+                }
+                Err(err_val) => {
+                    *server_status.write() = ServerStatus{status:Server::Dead,};
+                    log::info!("{}", err_val);
+                    ServerStatus{status:Server::Dead,}
+                }
+            }
+        }
+        Err(err_val) => {
+            *server_status.write() = ServerStatus{status:Server::Dead,};
+            log::info!("{}", err_val);
+            ServerStatus{status:Server::Dead,}
+        }
+    }
 }
 async fn coin_status_check() -> Result<CoinStatus, reqwest::Error> {
     Ok(reqwest::get(format!("{}{}", SERVER_ADDRESS, "/coin")).await.unwrap().json::<CoinStatus>().await.unwrap())
@@ -46,38 +95,54 @@ fn page_base() ->Element {
         }
     }
 }
-
 fn server_status_renderer() -> Element {
-    let server_status = use_resource(move || server_status_check());
-    match &*server_status.value().read() {
-        Some(Ok(server_status)) => {
-            rsx! {
-                h5 {
-                    ShowServerStatus { server_status: server_status.clone() }
+    let server_check_time = 1_u64;
+    let mut server_status = use_signal(move || ServerStatus{status:Server::Unstable,});
+    let mut server_status_watchdog = use_signal(move|| false);
+    let mut server_status_unstable = use_signal(move|| false);
+    let _server_status_task:Coroutine<()> = use_coroutine(|_| async move {
+        loop {
+            task::sleep(Duration::from_secs(server_check_time)).await;
+            *server_status_watchdog.write() = true;
+            *server_status.write() = server_status_check(server_status).await;
+            *server_status_watchdog.write() = false;
+        };
+    });
+    let _server_status_watchdog_timer:Coroutine<()> = use_coroutine(|_| async move {
+            let mut watchdog_counter = 0_i8;
+            loop {  
+                task::sleep(Duration::from_secs(2*server_check_time+1)).await;
+                if !server_status_watchdog() {
+                    *server_status_unstable.write() = false;
                 }
-            }
-            
+                if server_status_watchdog() {
+                    for _i in 0..5 {
+                        task::sleep(Duration::from_secs(1)).await;
+                        if server_status_watchdog() {
+                            watchdog_counter += 1;
+                        }
+                    }
+                    
+                }
+                if watchdog_counter > 4 {
+                    *server_status_unstable.write() = true;
+                }
+                watchdog_counter = 0;
         }
-        Some(Err(err_val)) => {
-            rsx! {
-                h5 {
-                    "Server Status: "
-                    { err_val.to_string() }
-                }
-            }
+    });
+    rsx! {
+        if server_status_unstable() && server_status_watchdog() {
+            ShowServerStatus {server_status:ServerStatus{status:Server::Dead,}}
         }
-        None => {
-            rsx! {
-                h5 {
-                    "Server Status: Dead"
-                }
-            }
+        else {
+            ShowServerStatus {server_status:server_status()}        
         }
     }
+    
 }
 fn coin_status_renderer() -> Element {
     let is_loading = use_signal(|| false);
-    let coin_result = use_signal(|| CoinStatus{status:"None".to_string(),});
+    let coin_result = use_signal(|| CoinStatus{status:Coin::Head,});
     let call_coin = move |_| {
         spawn({
             to_owned![is_loading];
@@ -89,15 +154,13 @@ fn coin_status_renderer() -> Element {
                         is_loading.set(false);
                         coin_result.set(coin_status);
                     }
-                    Err(err_val) => {
+                    Err(_) => {
                         is_loading.set(false);
-                        log::info!("{}", err_val);
                     }
                 }
             }
         });
     };
-    log::info!("{}", is_loading);
     rsx! {
         div {
             button {
@@ -122,7 +185,7 @@ fn ShowServerStatus(server_status: ServerStatus) -> Element {
         div {
             div { class: "flex items-center",
             span { "Server Status: " }
-            span { { server_status.status } }
+            span { { server_status.status.to_string() } }
             }
         }
     }
@@ -133,7 +196,7 @@ fn ShowCoinStatus(coin_status: CoinStatus) -> Element {
         div {
             div { class: "flex items-center",
             span { "Coin Status: " }
-            span { { coin_status.status } }
+            span { { coin_status.status.to_string() } }
             }
         }
     }
