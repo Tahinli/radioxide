@@ -2,21 +2,43 @@ use std::time::Duration;
 use async_std::task;
 use dioxus::prelude::*;
 use serde::Deserialize;
-
 const SERVER_ADDRESS: &str = "https://localhost:2323";
 
-static SERVER_STATUS:GlobalSignal<ServerStatus> = Signal::global(move || ServerStatus {status:"Alive".to_string(),});
-static SERVER_STATUS_WATCHDOG:GlobalSignal<bool> = Signal::global(move || false);
-static SERVER_STATUS_LOOSING:GlobalSignal<bool> = Signal::global(move || false);
-static SERVER_STATUS_IS_DEAD:GlobalSignal<bool> = Signal::global(move || false);
-
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-struct ServerStatus{
-    status: String,
+enum Server{
+    Alive,
+    Unstable,
+    Dead,
+}
+impl Server {
+    fn to_string(&mut self) -> String{
+        match self {
+            Self::Alive => {String::from("Alive")},
+            Self::Unstable => {String::from("Unstable")},
+            Self::Dead => {String::from("Dead")},
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-struct CoinStatus{
-    status: String,
+enum Coin{
+    Tail,
+    Head,
+}
+impl Coin {
+    fn to_string(&mut self) -> String {
+        match self {
+            Self::Head => {String::from("Head")},
+            Self::Tail => {String::from("Tail")},
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct  ServerStatus {
+    status:Server,
+}
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct CoinStatus {
+    status:Coin,
 }
 
 fn main() {
@@ -25,24 +47,25 @@ fn main() {
     launch(app);
 }
 
-async fn server_status_check() ->ServerStatus {
+async fn server_status_check(mut server_status:Signal<ServerStatus>) ->ServerStatus {
     match reqwest::get(SERVER_ADDRESS).await {
         Ok(response) => {
-            *SERVER_STATUS_WATCHDOG.write() = false;
             match response.json::<ServerStatus>().await {
-                Ok(server_status) => {
-                    *SERVER_STATUS_LOOSING.write() = false;
-                    server_status
+                Ok(_) => {
+                    *server_status.write() = ServerStatus{status:Server::Alive,};
+                    ServerStatus{status:Server::Alive,}
                 }
                 Err(err_val) => {
-                    *SERVER_STATUS_LOOSING.write() = true;
-                    ServerStatus{status:err_val.to_string(),}
+                    *server_status.write() = ServerStatus{status:Server::Dead,};
+                    log::info!("{}", err_val);
+                    ServerStatus{status:Server::Dead,}
                 }
             }
         }
         Err(err_val) => {
-            *SERVER_STATUS_LOOSING.write() = true;
-            ServerStatus{status:err_val.to_string(),}
+            *server_status.write() = ServerStatus{status:Server::Dead,};
+            log::info!("{}", err_val);
+            ServerStatus{status:Server::Dead,}
         }
     }
 }
@@ -74,59 +97,52 @@ fn page_base() ->Element {
 }
 fn server_status_renderer() -> Element {
     let server_check_time = 1_u64;
+    let mut server_status = use_signal(move || ServerStatus{status:Server::Unstable,});
+    let mut server_status_watchdog = use_signal(move|| false);
+    let mut server_status_unstable = use_signal(move|| false);
     let _server_status_task:Coroutine<()> = use_coroutine(|_| async move {
         loop {
             task::sleep(Duration::from_secs(server_check_time)).await;
-            *SERVER_STATUS_WATCHDOG.write() = true;
-            *SERVER_STATUS.write() = server_status_check().await;
-            /*match server_status_check().await {
-                Ok(status) => {
-                    server_status_watchdog.set(false);
-                    server_status.set(status);
-                }
-                Err(err_val) => {
-                    server_status.set(ServerStatus {status:err_val.to_string(),});
-                }
-            }*/
-            
+            *server_status_watchdog.write() = true;
+            *server_status.write() = server_status_check(server_status).await;
+            *server_status_watchdog.write() = false;
         };
     });
     let _server_status_watchdog_timer:Coroutine<()> = use_coroutine(|_| async move {
-            let mut is_loosing_counter = 0_i8;
+            let mut watchdog_counter = 0_i8;
             loop {  
                 task::sleep(Duration::from_secs(2*server_check_time+1)).await;
-                if !SERVER_STATUS_WATCHDOG() {
-                    *SERVER_STATUS_LOOSING.write() = false;
+                if !server_status_watchdog() {
+                    *server_status_unstable.write() = false;
                 }
-                if SERVER_STATUS_WATCHDOG() {
+                if server_status_watchdog() {
                     for _i in 0..5 {
                         task::sleep(Duration::from_secs(1)).await;
-                        if SERVER_STATUS_WATCHDOG() {
-                            is_loosing_counter += 1;
+                        if server_status_watchdog() {
+                            watchdog_counter += 1;
                         }
                     }
                     
                 }
-                if is_loosing_counter > 4 {
-                    *SERVER_STATUS_LOOSING.write() = true;
+                if watchdog_counter > 4 {
+                    *server_status_unstable.write() = true;
                 }
-                is_loosing_counter = 0;
+                watchdog_counter = 0;
         }
     });
     rsx! {
-        if SERVER_STATUS_LOOSING() && SERVER_STATUS_WATCHDOG() {
-            {*SERVER_STATUS_IS_DEAD.write() = true}
-            ShowServerStatus {server_status:ServerStatus{status:"Dead".to_string(),}}
+        if server_status_unstable() && server_status_watchdog() {
+            ShowServerStatus {server_status:ServerStatus{status:Server::Dead,}}
         }
         else {
-            ShowServerStatus {server_status:SERVER_STATUS()}        
+            ShowServerStatus {server_status:server_status()}        
         }
     }
     
 }
 fn coin_status_renderer() -> Element {
     let is_loading = use_signal(|| false);
-    let coin_result = use_signal(|| CoinStatus{status:"None".to_string(),});
+    let coin_result = use_signal(|| CoinStatus{status:Coin::Head,});
     let call_coin = move |_| {
         spawn({
             to_owned![is_loading];
@@ -169,7 +185,7 @@ fn ShowServerStatus(server_status: ServerStatus) -> Element {
         div {
             div { class: "flex items-center",
             span { "Server Status: " }
-            span { { server_status.status } }
+            span { { server_status.status.to_string() } }
             }
         }
     }
@@ -180,7 +196,7 @@ fn ShowCoinStatus(coin_status: CoinStatus) -> Element {
         div {
             div { class: "flex items-center",
             span { "Coin Status: " }
-            span { { coin_status.status } }
+            span { { coin_status.status.to_string() } }
             }
         }
     }
