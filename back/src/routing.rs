@@ -1,20 +1,7 @@
-use crate::AppState;
+use crate::{AppState, ServerStatus, CoinStatus};
 use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
-use serde::{Deserialize, Serialize};
 use tower_http::cors::CorsLayer;
 use rand::prelude::*;
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-enum ServerStatus{
-    Alive,
-    Unstable,
-    Dead,
-}
-#[derive(Debug, Clone, PartialEq, Serialize,Deserialize)]
-enum CoinStatus{
-    Tail,
-    Head,
-}
 
 pub async fn routing(State(state): State<AppState>) -> Router {
     Router::new()
