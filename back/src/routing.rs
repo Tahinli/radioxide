@@ -1,4 +1,4 @@
-use crate::{AppState, ServerStatus, CoinStatus};
+use crate::{AppState, ServerStatus, CoinStatus, streaming};
 use axum::{body::Body, extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
 use tokio::fs::File;
 use tokio_util::io::ReaderStream;
@@ -36,7 +36,10 @@ async fn flip_coin() -> impl IntoResponse {
     (StatusCode::OK, Json(coin_json))
 }
 
+#[axum::debug_handler]
 async fn stream() -> impl IntoResponse {
+    println!("Stream");
+    streaming::start().await;
     let file = File::open("audios/audio.mp3").await.unwrap();
     let stream = ReaderStream::new(file);
     Body::from_stream(stream)

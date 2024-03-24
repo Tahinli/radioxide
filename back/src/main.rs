@@ -1,4 +1,4 @@
-use back::{routing, AppState};
+use back::{AppState, routing, streaming};
 use std::{env, net::SocketAddr};
 use axum_server::tls_rustls::RustlsConfig;
 
@@ -23,6 +23,7 @@ async fn main() {
     };
     let app = routing::routing(axum::extract::State(state)).await;
     let addr = SocketAddr::from(take_args().parse::<SocketAddr>().unwrap());
+    tokio::spawn(streaming::start());
     axum_server::bind_rustls(addr, config)
         .serve(app.into_make_service())
         .await

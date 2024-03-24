@@ -33,7 +33,7 @@ async fn main() {
             }
         }
         if output_fell_behind {
-            eprintln!("Output consumed all, increase delay");
+            eprintln!("Too fast friend");
         }
     };
 
@@ -49,7 +49,7 @@ async fn main() {
             };
         }
         if input_fell_behind {
-            eprintln!("Input can't be fast enough, increase delay");
+            eprintln!("Too fast");
         }
     };
 
