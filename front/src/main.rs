@@ -100,14 +100,17 @@ async fn start_listening() {
     let stream = tokio_tungstenite_wasm::connect(connect_addr).await.unwrap();
     let ring = HeapRb::<f32>::new(1000000);
     let (producer, consumer) = ring.split();
-    tokio_with_wasm::tokio::spawn(sound_stream(stream, producer));
-    tokio_with_wasm::tokio::time::sleep(Duration::from_secs(1));
-    tokio_with_wasm::tokio::spawn(listen(consumer));
+    let _sound_stream:Coroutine<()> = use_coroutine(|_| async move {
+        sound_stream(stream, producer).await;
+    });
+    tokio_with_wasm::tokio::time::sleep(Duration::from_secs(1)).await;
+    let _listen:Coroutine<()> = use_coroutine(|_| async move {
+        listen(consumer).await;
+    });
 }
 fn app() -> Element {
     rsx! {
         page_base {}
-        //audio_stream_renderer {}
         div {
             button {
                 onclick: move |_| start_listening(),
@@ -135,52 +138,6 @@ fn page_base() ->Element {
         }
     }
 }
-
-// pub async fn run<T>(consumer: Consumer<f32, Arc<SharedRb<f32, Vec<MaybeUninit<f32>>>>>, device: &cpal::Device, config: &cpal::StreamConfig) -> Result<(), anyhow::Error>
-// where
-//     T: SizedSample + FromSample<f32>,
-// {
-//     let sample_rate = config.sample_rate.0 as f32;
-//     let channels = config.channels as usize;
-
-//     // Produce a sinusoid of maximum amplitude.
-//     let mut sample_clock = 0f32;
-//     let mut next_value = move || {
-//         sample_clock = (sample_clock + 1.0) % sample_rate;
-//         (sample_clock * 440.0 * 2.0 * std::f32::consts::PI / sample_rate).sin()
-//     };
-
-//     let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
-
-//     let stream = device.build_output_stream(
-//         config,
-//         move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
-//             write_data(data, channels, &mut next_value)
-//         },
-//         err_fn,
-//         None,
-//     )?;
-//     stream.play()?;
-
-//     loop {
-        
-//     }
-
-//     //Ok(())
-// }
-
-// fn write_data<T>(output: &mut [T], channels: usize, next_sample: &mut dyn FnMut() -> f32)
-// where
-//     T: Sample + FromSample<f32>,
-// {
-//     for frame in output.chunks_mut(channels) {
-//         let value: T = T::from_sample(next_sample());
-//         for sample in frame.iter_mut() {
-//             *sample = value;
-//         }
-//     }
-//}
-
 
 fn err_fn(err: cpal::StreamError) {
     eprintln!("Something Happened: {}", err);
@@ -336,19 +293,6 @@ fn coin_status_renderer() -> Element {
                 ShowCoinStatus{ coin_status: coin_result().clone() }
             }
         }        
-    }
-}
-fn audio_stream_renderer() -> Element {
-    rsx! {
-        div {
-            audio{  
-                    src:"https://tahinli.com.tr:2323/stream",
-                    controls:true, 
-                    autoplay: true,
-                    muted:false,
-                    r#loop:true,
-            }
-        }
     }
 }
 #[component]
