@@ -9,7 +9,7 @@ use tokio_with_wasm::tokio::time::sleep;
 
 pub async fn start_listening() {
     log::info!("Trying Sir");
-    let connect_addr = "ws://127.0.0.1:2424";
+    let connect_addr = "ws://192.168.1.2:2424";
     let stream = tokio_tungstenite_wasm::connect(connect_addr).await.unwrap();
     let ring = HeapRb::<f32>::new(1000000);
     let (producer, consumer) = ring.split();
@@ -27,14 +27,26 @@ async fn sound_stream(
     mut producer: Producer<f32, Arc<SharedRb<f32, Vec<MaybeUninit<f32>>>>>,
 ) {
     while let Some(msg) = stream.next().await {
-        match msg.unwrap().to_string().parse::<f32>() {
-            Ok(sound_data) => match producer.push(sound_data) {
-                Ok(_) => {}
-                Err(_) => {}
-            },
-            Err(_) => {}
-        };
+        let data = String::from_utf8(msg.unwrap().into()).unwrap();
+        let data_parsed:Vec<&str> = data.split("#").collect();
+        //let mut sound_data:Vec<f32> = vec![];
+        for element in data_parsed {
+            let single_data:f32 = match element.parse() {
+                Ok(single) => single,
+                Err(_) => 0.0,
+            };
+            producer.push(single_data).unwrap();
+        }
     }
+    // while let Some(msg) = stream.next().await {
+    //     match msg.unwrap().to_string().parse::<f32>() {
+    //         Ok(sound_data) => match producer.push(sound_data) {
+    //             Ok(_) => {}
+    //             Err(_) => {}
+    //         },
+    //         Err(_) => {}
+    //     };
+    // }
     log::info!("Connection Lost Sir");
 }
 async fn listen(mut consumer: Consumer<f32, Arc<SharedRb<f32, Vec<MaybeUninit<f32>>>>>) {
