@@ -1,11 +1,13 @@
 use std::{mem::MaybeUninit, sync::Arc, time::Duration};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use ringbuf::{Consumer, HeapRb, Producer, SharedRb};
-use tokio::{net::{TcpListener, TcpStream}, time::Instant};
 use futures_util::SinkExt;
+use ringbuf::{Consumer, HeapRb, Producer, SharedRb};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    time::Instant,
+};
 use tokio_tungstenite::WebSocketStream;
-
 
 pub async fn start() {
     let socket = TcpListener::bind("192.168.1.2:2424").await.unwrap();
@@ -17,21 +19,24 @@ pub async fn start() {
 
         let timer = Instant::now();
 
-
         tokio::spawn(record(producer));
         tokio::spawn(stream(timer, ws_stream, consumer));
     }
 }
 
-pub async fn stream(timer:Instant, mut ws_stream:WebSocketStream<TcpStream>, mut consumer: Consumer<f32, Arc<SharedRb<f32, Vec<MaybeUninit<f32>>>>>) {
+pub async fn stream(
+    timer: Instant,
+    mut ws_stream: WebSocketStream<TcpStream>,
+    mut consumer: Consumer<f32, Arc<SharedRb<f32, Vec<MaybeUninit<f32>>>>>,
+) {
     println!("Waiting");
     loop {
         tokio::time::sleep(Duration::from_secs(2)).await;
-        let mut data:Vec<u8> = Vec::new();
+        let mut data: Vec<u8> = Vec::new();
         let now = timer.elapsed().as_secs();
-        while !consumer.is_empty() && (timer.elapsed().as_secs()+2) > now{
+        while !consumer.is_empty() && (timer.elapsed().as_secs() + 2) > now {
             match consumer.pop() {
-                Some(single_data) => {                    
+                Some(single_data) => {
                     let ring = HeapRb::<u8>::new(1000000);
                     let (mut producer, mut consumer) = ring.split();
                     let single_data_packet = single_data.to_string().as_bytes().to_vec();
@@ -46,9 +51,7 @@ pub async fn stream(timer:Instant, mut ws_stream:WebSocketStream<TcpStream>, mut
                         data.push(consumer.pop().unwrap());
                     }
                 }
-                None => {
-
-                }
+                None => {}
             }
         }
         ws_stream.send(data.into()).await.unwrap();
@@ -63,21 +66,21 @@ pub async fn record(mut producer: Producer<f32, Arc<SharedRb<f32, Vec<MaybeUnini
 
     println!("Input Device: {}", input_device.name().unwrap());
 
-    let config:cpal::StreamConfig = input_device.default_input_config().unwrap().into();
+    let config: cpal::StreamConfig = input_device.default_input_config().unwrap().into();
 
-    let input_data_fn = move |data: &[f32], _:&cpal::InputCallbackInfo| {
+    let input_data_fn = move |data: &[f32], _: &cpal::InputCallbackInfo| {
         for &sample in data {
             match producer.push(sample) {
-                Ok(_) => {},
-                Err(_) => {},
+                Ok(_) => {}
+                Err(_) => {}
             }
             println!("{}", sample);
         }
     };
-    
 
-    let input_stream = input_device.build_input_stream(&config, input_data_fn, err_fn, None).unwrap();
-    
+    let input_stream = input_device
+        .build_input_stream(&config, input_data_fn, err_fn, None)
+        .unwrap();
 
     println!("STREAMIN");
     input_stream.play().unwrap();

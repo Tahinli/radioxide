@@ -1,17 +1,20 @@
-use crate::{AppState, ServerStatus, CoinStatus, streaming};
-use axum::{body::Body, extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
+use crate::{streaming, AppState, CoinStatus, ServerStatus};
+use axum::{
+    body::Body, extract::State, http::StatusCode, response::IntoResponse, routing::get, Json,
+    Router,
+};
+use rand::prelude::*;
 use tokio::fs::File;
 use tokio_util::io::ReaderStream;
 use tower_http::cors::CorsLayer;
-use rand::prelude::*;
 
 pub async fn routing(State(state): State<AppState>) -> Router {
     Router::new()
-    .route("/", get(alive))
-    .route("/coin", get(flip_coin))
-    .route("/stream", get(stream))
-    .layer(CorsLayer::permissive())
-    .with_state(state.clone())
+        .route("/", get(alive))
+        .route("/coin", get(flip_coin))
+        .route("/stream", get(stream))
+        .layer(CorsLayer::permissive())
+        .with_state(state.clone())
 }
 
 async fn alive() -> impl IntoResponse {
@@ -24,7 +27,7 @@ async fn alive() -> impl IntoResponse {
 
 async fn flip_coin() -> impl IntoResponse {
     let mut rng = rand::thread_rng();
-    let random:f64 = rng.gen();
+    let random: f64 = rng.gen();
     let mut flip_status = CoinStatus::Tail;
     if random > 0.5 {
         flip_status = CoinStatus::Head;
