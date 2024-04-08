@@ -70,8 +70,7 @@ pub async fn sound_stream(
                 };
                 if let Err(_) = producer.push(single_data) {}
             }
-        }
-        else {
+        } else {
             break;
         }
     }

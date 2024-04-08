@@ -21,8 +21,7 @@ pub fn listen_renderer() -> Element {
                     }
                 });
             }
-        }
-        else {
+        } else {
             is_listening.set(false);
         }
     };
