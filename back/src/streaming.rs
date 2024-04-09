@@ -1,8 +1,7 @@
+
 use std::time::Duration;
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use futures_util::SinkExt;
-use ringbuf::HeapRb;
+use futures_util::{SinkExt, StreamExt};
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::broadcast::{channel, Receiver, Sender},
@@ -16,18 +15,22 @@ const MAX_TOLERATED_MESSAGE_COUNT: usize = 10;
 pub async fn start() {
     let socket = TcpListener::bind("192.168.1.2:2424").await.unwrap();
     println!("Dude Someone Triggered");
-
     let (record_producer, record_consumer) = channel(BUFFER_LENGTH);
+    let streamer_socket = TcpListener::bind("192.168.1.2:2525").await.unwrap();
+    if let Ok((streamer_tcp, streamer_info)) = streamer_socket.accept().await {
+        let ws_stream = tokio_tungstenite::accept_async(streamer_tcp).await.unwrap();
+        println!("New Streamer: {:#?}", streamer_info);
+        tokio::spawn(streamer_stream(record_producer, ws_stream));
+    }
 
     let (message_producer, _) = channel(BUFFER_LENGTH);
-    tokio::spawn(record(record_producer));
     tokio::spawn(message_organizer(message_producer.clone(), record_consumer));
-    while let Ok((tcp_stream, info)) = socket.accept().await {
+    while let Ok((tcp_stream, listener_info)) = socket.accept().await {
         let ws_stream = tokio_tungstenite::accept_async(tcp_stream).await.unwrap();
-        println!("New Connection: {}", info);
+        println!("New Listener: {}", listener_info);
         let new_listener = Listener {
-            ip: info.ip(),
-            port: info.port(),
+            ip: listener_info.ip(),
+            port: listener_info.port(),
         };
         tokio::spawn(stream(
             new_listener,
@@ -36,35 +39,48 @@ pub async fn start() {
         ));
     }
 }
-async fn message_organizer(message_producer: Sender<Message>, mut consumer: Receiver<f32>) {
+
+async fn streamer_stream(record_producer:Sender<Message>, mut ws_stream: WebSocketStream<TcpStream>) {
+    while let Some(message_with_question) = ws_stream.next().await {
+        match message_with_question {
+            Ok(message) => {
+                match record_producer.send(message) {
+                    Ok(_) => {
+
+                    }
+                    Err(_) => {
+
+                    }
+                }
+            }
+            Err(_) => {
+
+            }
+        }
+    }
+}
+
+async fn message_organizer(message_producer: Sender<Message>, mut consumer: Receiver<Message>) {
     loop {
-        let mut single_message: Vec<u8> = Vec::new();
+        let mut messages:Vec<u8> = vec![];
         let mut iteration = consumer.len();
         while iteration > 0 {
             iteration -= 1;
             match consumer.recv().await {
-                Ok(single_data) => {
-                    let ring = HeapRb::<u8>::new(BUFFER_LENGTH);
-                    let (mut producer, mut consumer) = ring.split();
-                    let single_data_packet = single_data.to_string().as_bytes().to_vec();
-                    let terminator = "#".as_bytes().to_vec();
-
-                    for element in single_data_packet {
-                        producer.push(element).unwrap();
-                    }
-                    for element in terminator {
-                        producer.push(element).unwrap();
-                    }
-                    while !consumer.is_empty() {
-                        single_message.push(consumer.pop().unwrap());
+                Ok(single_message) => {
+                    let single_message_packet = single_message.to_string().as_bytes().to_vec();
+                    for element in single_message_packet {
+                        messages.push(element);
                     }
                 }
-                Err(_) => {}
+                Err(_) => {
+
+                }
             }
         }
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        if !single_message.is_empty() {
-            match message_producer.send(single_message.into()) {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        if !messages.is_empty() {
+            match message_producer.send(messages.into()) {
                 Ok(_) => {}
                 Err(_) => {}
             }
@@ -110,36 +126,3 @@ async fn stream(
     }
 }
 
-async fn record(producer: Sender<f32>) {
-    println!("Hello, world!");
-    let host = cpal::default_host();
-    let input_device = host.default_input_device().unwrap();
-
-    println!("Input Device: {}", input_device.name().unwrap());
-
-    let config: cpal::StreamConfig = input_device.default_input_config().unwrap().into();
-
-    let input_data_fn = move |data: &[f32], _: &cpal::InputCallbackInfo| {
-        for &sample in data {
-            match producer.send(sample) {
-                Ok(_) => {}
-                Err(_) => {}
-            }
-            //println!("{}", sample);
-        }
-    };
-
-    let input_stream = input_device
-        .build_input_stream(&config, input_data_fn, err_fn, None)
-        .unwrap();
-
-    println!("STREAMIN");
-    input_stream.play().unwrap();
-    //oneshot ile durdurabiliriz sanırım
-    std::thread::sleep(std::time::Duration::from_secs(10000000));
-    println!("DONE I HOPE");
-}
-
-fn err_fn(err: cpal::StreamError) {
-    eprintln!("Something Happened: {}", err);
-}
