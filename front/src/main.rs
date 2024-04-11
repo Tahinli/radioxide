@@ -12,8 +12,8 @@ fn app() -> Element {
     rsx! {
         page_base {}
         listen_renderer {}
-        coin_status_renderer {server_address:server_address.clone()}
-        server_status_renderer {server_address:server_address.clone()}
+        // coin_status_renderer {server_address:server_address.clone()}
+        // server_status_renderer {server_address:server_address.clone()}
     }
 }
 

@@ -31,24 +31,20 @@ pub async fn start_listening(
         is_maintaining.set((true, true));
         let ring = HeapRb::<f32>::new(BUFFER_LENGTH);
         let (producer, consumer) = ring.split();
-        spawn({
+        let _sound_stream_task = spawn({
             async move {
                 sound_stream(is_listening, stream_consumer, producer).await;
                 is_listening.set(false);
                 is_maintaining.set((false, is_maintaining().1));
             }
         });
-        spawn({
+        let _listen_podcast_task = spawn({
             async move {
                 listen_podcast(is_listening, consumer).await;
                 is_listening.set(false);
                 //stream_producer.send("Disconnect ME".into()).await.unwrap();
                 stream_producer.close().await.unwrap();
-                //buffer time waiting actually
-                tokio_with_wasm::tokio::time::sleep(Duration::from_secs(2)).await;
-                log::info!("{:#?}", is_maintaining());
                 is_maintaining.set((is_maintaining().0, false));
-                log::info!("pod{:#?}", is_maintaining());
             }
         });
     }
@@ -63,14 +59,30 @@ pub async fn sound_stream(
 
     while let Some(msg) = stream_consumer.next().await {
         if is_listening() {
-            let data = String::from_utf8(msg.unwrap().into()).unwrap();
-            let data_parsed: Vec<&str> = data.split("#").collect();
-            for element in data_parsed {
-                let single_data: f32 = match element.parse() {
-                    Ok(single) => single,
+            let data = msg.unwrap().to_string();
+            //log::info!("{:#?}", data);
+            //log::info!("{}", data.len());
+
+            let mut datum_parsed:Vec<char> = vec![];
+            let mut data_parsed:Vec<String> = vec![];
+            
+            
+            for char in data.chars() {
+                if char == '+' || char == '-' {
+                    data_parsed.push(datum_parsed.iter().collect());
+                    datum_parsed.clear();
+                    
+                }
+                datum_parsed.push(char);
+                
+            }
+
+            for single_data in data_parsed {
+                let sample = match single_data.parse::<f32>() {
+                    Ok(sample) => sample,
                     Err(_) => 0.0,
                 };
-                if let Err(_) = producer.push(single_data) {}
+                if let Err(_) = producer.push(sample){}
             }
         } else {
             break;
