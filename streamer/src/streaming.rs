@@ -55,7 +55,6 @@ async fn message_organizer(message_producer: Sender<Message>, mut consumer: Rece
                 Err(_) => {}
             }
         }
-        tokio::time::sleep(Duration::from_secs(1)).await;
         if !messages.is_empty() {
             match message_producer.send(messages.into()) {
                 Ok(_) => {}
@@ -67,6 +66,7 @@ async fn message_organizer(message_producer: Sender<Message>, mut consumer: Rece
                 message_producer.receiver_count()
             );
         }
+        tokio::time::sleep(Duration::from_millis(500)).await;
     }
 }
 
