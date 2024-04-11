@@ -61,7 +61,7 @@ pub async fn sound_stream(
         if is_listening() {
             let data = msg.unwrap().to_string();
             //log::info!("{:#?}", data);
-            //log::info!("{}", data.len());
+            log::info!("{}", data.len());
 
             let mut datum_parsed:Vec<char> = vec![];
             let mut data_parsed:Vec<String> = vec![];
@@ -71,10 +71,14 @@ pub async fn sound_stream(
                 if char == '+' || char == '-' {
                     data_parsed.push(datum_parsed.iter().collect());
                     datum_parsed.clear();
-                    
                 }
                 datum_parsed.push(char);
-                
+                if data.len() > 2 {
+                    if char == '+' || char == '-' {
+                        datum_parsed.push('0');
+                        datum_parsed.push('.');
+                    }
+                }
             }
 
             for single_data in data_parsed {

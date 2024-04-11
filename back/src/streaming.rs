@@ -1,4 +1,3 @@
-
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -22,7 +21,7 @@ pub async fn start() {
         println!("New Streamer: {:#?}", streamer_info);
         tokio::spawn(streamer_stream(record_producer, ws_stream));
     }
-    
+
     let (message_producer, message_consumer) = channel(BUFFER_LENGTH);
     let (buffered_producer, _) = channel(BUFFER_LENGTH);
     tokio::spawn(message_organizer(message_producer.clone(), record_consumer));
@@ -43,47 +42,48 @@ pub async fn start() {
 }
 async fn buffer_layer(mut message_consumer: Receiver<Message>, buffered_producer: Sender<Message>) {
     loop {
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
         let mut messages_buffered: Vec<Message> = vec![];
         while message_consumer.len() > 0 {
             match message_consumer.recv().await {
                 Ok(msg) => {
                     messages_buffered.push(msg);
-                }Err(_) => {
-                    
                 }
+                Err(_) => {}
             }
         }
-        for message_buffered in messages_buffered {
-            match buffered_producer.send(message_buffered) {
-                Ok(_) => {},
-                Err(_) => {},
+        if messages_buffered.len() > 0 {
+            for message_buffered in messages_buffered {
+                match buffered_producer.send(message_buffered) {
+                    Ok(_) => {}
+                    Err(_) => {}
+                }
             }
         }
     }
 }
-async fn streamer_stream(record_producer:Sender<Message>, mut ws_stream: WebSocketStream<TcpStream>) {
+async fn streamer_stream(
+    record_producer: Sender<Message>,
+    mut ws_stream: WebSocketStream<TcpStream>,
+) {
     while let Some(message_with_question) = ws_stream.next().await {
         match message_with_question {
             Ok(message) => {
                 println!("{}", message.len());
                 match record_producer.send(message) {
-                    Ok(_) => {
-
-                    }
-                    Err(_) => {
-
-                    }
+                    Ok(_) => {}
+                    Err(_) => {}
                 }
             }
-            Err(_) => {
-
-            }
+            Err(_) => {}
         }
     }
 }
 
-async fn message_organizer(message_producer: Sender<Message>, mut record_consumer: Receiver<Message>) {
+async fn message_organizer(
+    message_producer: Sender<Message>,
+    mut record_consumer: Receiver<Message>,
+) {
     loop {
         let mut messages = String::new();
         let mut iteration = record_consumer.len();
@@ -93,11 +93,8 @@ async fn message_organizer(message_producer: Sender<Message>, mut record_consume
                 Ok(single_message) => {
                     let single_message_packet = single_message.to_string();
                     messages = format!("{}{}", messages, single_message_packet);
-                    
                 }
-                Err(_) => {
-
-                }
+                Err(_) => {}
             }
         }
         if messages.len() > 0 {
@@ -147,4 +144,3 @@ async fn stream(
         }
     }
 }
-
