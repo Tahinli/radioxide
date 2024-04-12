@@ -1,5 +1,6 @@
-use std::time::Duration;
+use std::{io::Write, time::Duration};
 
+use brotli::CompressorWriter;
 use futures_util::SinkExt;
 use ringbuf::HeapRb;
 use tokio::sync::broadcast::{channel, Receiver, Sender};
@@ -41,7 +42,7 @@ async fn message_organizer(message_producer: Sender<Message>, mut consumer: Rece
                         let _zero = charred.remove(1);
                         let _point = charred.remove(1);
                     }
-                    charred.truncate(8);
+                    charred.truncate(4);
                     let mut single_data_packet: Vec<u8> = vec![];
                     for char in charred {
                         let char_packet = char.to_string().as_bytes().to_vec();
@@ -60,17 +61,24 @@ async fn message_organizer(message_producer: Sender<Message>, mut consumer: Rece
             }
         }
         if !messages.is_empty() {
-            match message_producer.send(messages.into()) {
+            let mut compression_writer = CompressorWriter::new(vec![], BUFFER_LENGTH, 4, 24);
+            if let Err(err_val) = compression_writer.write_all(&messages) {
+                eprintln!("Error: Compression | {}", err_val);
+            }
+            let compressed_messages = compression_writer.into_inner();
+            // println!("Compressed Len {}", compressed_messages.len());
+            // println!("UNCompressed Len {}", messages.len());
+            match message_producer.send(compressed_messages.into()) {
                 Ok(_) => {}
                 Err(_) => {}
             }
-            println!(
-                "Message Counter = {} | Receiver Count = {}",
-                message_producer.len(),
-                message_producer.receiver_count()
-            );
+            // println!(
+            //     "Message Counter = {} | Receiver Count = {}",
+            //     message_producer.len(),
+            //     message_producer.receiver_count()
+            // );
         }
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 

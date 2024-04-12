@@ -1,5 +1,6 @@
-use std::{mem::MaybeUninit, sync::Arc, time::Duration};
+use std::{io::Write, mem::MaybeUninit, sync::Arc, time::Duration};
 
+use brotli::DecompressorWriter;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use dioxus::{
     prelude::spawn,
@@ -8,7 +9,7 @@ use dioxus::{
 use futures_util::{stream::SplitStream, SinkExt, StreamExt};
 
 use ringbuf::{Consumer, HeapRb, Producer, SharedRb};
-use tokio_tungstenite_wasm::WebSocketStream;
+use tokio_tungstenite_wasm::{Message, WebSocketStream};
 
 static BUFFER_LIMIT: usize = 800000;
 static BUFFER_LENGTH: usize = 1000000;
@@ -57,16 +58,28 @@ pub async fn sound_stream(
 ) {
     log::info!("Attention! We need cables");
 
-    while let Some(msg) = stream_consumer.next().await {
+    while let Some(message_with_question) = stream_consumer.next().await {
         if is_listening() {
-            let data = msg.unwrap().to_string();
-            //log::info!("{:#?}", data);
-            log::info!("{}", data.len());
+            
+            //log::info!("{}", message_with_question.unwrap().len());
+            let mut data:Vec<u8> = vec![];
+            if let Message::Binary(message) =  message_with_question.unwrap() {
+                data = message;
+            }
 
+            let mut decompression_writer = DecompressorWriter::new(vec![], BUFFER_LENGTH);
+            if let Err(err_val) = decompression_writer.write_all(&data) {
+                log::error!("Error: Decompression | {}", err_val);
+            }
+            let uncompressed_data = 
+            match decompression_writer.into_inner() {
+                Ok(healty_packet) => healty_packet,
+                Err(unhealty_packet) => {log::warn!("Warning: Unhealty Packet | {}", unhealty_packet.len());unhealty_packet},
+            };
+
+            let data = String::from_utf8(uncompressed_data).unwrap();
             let mut datum_parsed:Vec<char> = vec![];
             let mut data_parsed:Vec<String> = vec![];
-            
-            
             for char in data.chars() {
                 if char == '+' || char == '-' {
                     data_parsed.push(datum_parsed.iter().collect());
