@@ -11,13 +11,14 @@ use futures_util::{stream::SplitStream, SinkExt, StreamExt};
 use ringbuf::{Consumer, HeapRb, Producer, SharedRb};
 use tokio_tungstenite_wasm::{Message, WebSocketStream};
 
-static BUFFER_LIMIT: usize = 800000;
 static BUFFER_LENGTH: usize = 1000000;
+static BUFFER_LIMIT: usize = BUFFER_LENGTH/100*90;
 
 pub async fn start_listening(
     mut is_maintaining: Signal<(bool, bool)>,
     mut is_listening: Signal<bool>,
 ) {
+    //seperate record and stream, refactor
     if is_listening() {
         log::info!("Trying Sir");
         let connect_addr = "ws://192.168.1.2:2424";

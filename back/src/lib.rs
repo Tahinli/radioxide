@@ -10,6 +10,12 @@ pub mod utils;
 pub struct AppState {}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Streamer {
+    ip: IpAddr,
+    port: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Listener {
     ip: IpAddr,
     port: u16,
