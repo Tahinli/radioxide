@@ -3,7 +3,8 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use tokio::{
     net::{TcpListener, TcpStream},
-    sync::broadcast::{channel, Receiver, Sender}, time::Instant,
+    sync::broadcast::{channel, Receiver, Sender},
+    time::Instant,
 };
 use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
 
@@ -17,23 +18,32 @@ pub async fn start() {
     let (record_producer, record_consumer) = channel(BUFFER_LENGTH);
     let streamer_socket = TcpListener::bind("192.168.1.2:2525").await.unwrap();
     let timer = Instant::now();
-    
+
     loop {
         match streamer_socket.accept().await {
             Ok((streamer_tcp, streamer_info)) => {
                 match tokio_tungstenite::accept_async(streamer_tcp).await {
                     Ok(ws_stream) => {
-                        println!("New Streamer: {:#?} | {:#?}", streamer_info, timer.elapsed());
+                        println!(
+                            "New Streamer: {:#?} | {:#?}",
+                            streamer_info,
+                            timer.elapsed()
+                        );
                         let new_streamer = Streamer {
                             ip: streamer_info.ip(),
                             port: streamer_info.port(),
                         };
-                        tokio::spawn(streamer_stream(new_streamer, record_producer, ws_stream, timer));
+                        tokio::spawn(streamer_stream(
+                            new_streamer,
+                            record_producer,
+                            ws_stream,
+                            timer,
+                        ));
                         break;
-                    },
+                    }
                     Err(err_val) => eprintln!("Error: TCP to WS Transform | {}", err_val),
                 }
-            },
+            }
             Err(err_val) => eprintln!("Error: TCP Accept Connection | {}", err_val),
         }
     }
@@ -65,7 +75,11 @@ async fn status_checker(buffered_producer: Sender<Message>, timer: Instant) {
         if buffered_producer.receiver_count() != 0 {
             if buffered_producer.len() > 2 {
                 bottleneck_flag = true;
-                println!("Bottleneck: {} | {:#?}", buffered_producer.len(), timer.elapsed());
+                println!(
+                    "Bottleneck: {} | {:#?}",
+                    buffered_producer.len(),
+                    timer.elapsed()
+                );
             }
             if bottleneck_flag && buffered_producer.len() < 2 {
                 bottleneck_flag = false;
@@ -74,9 +88,8 @@ async fn status_checker(buffered_producer: Sender<Message>, timer: Instant) {
             if listener_counter != buffered_producer.receiver_count() {
                 listener_counter = buffered_producer.receiver_count();
                 println!("Listener(s): {}", listener_counter);
-            }    
+            }
         }
-        
     }
 }
 async fn buffer_layer(mut message_consumer: Receiver<Message>, buffered_producer: Sender<Message>) {
@@ -85,9 +98,7 @@ async fn buffer_layer(mut message_consumer: Receiver<Message>, buffered_producer
         while message_consumer.len() > 0 {
             match message_consumer.recv().await {
                 Ok(message) => match buffered_producer.send(message) {
-                    Ok(_) => {
-                        
-                    }
+                    Ok(_) => {}
                     Err(_) => {}
                 },
                 Err(_) => {}
@@ -113,10 +124,14 @@ async fn streamer_stream(
                         }
                     }
                     Err(_) => {}
-                }        
+                }
             }
             None => {
-                println!("Streamer Disconnected: {} | {:#?}", format!("{}:{}", streamer.ip, streamer.port), timer.elapsed());
+                println!(
+                    "Streamer Disconnected: {} | {:#?}",
+                    format!("{}:{}", streamer.ip, streamer.port),
+                    timer.elapsed()
+                );
                 return;
             }
         }
@@ -148,7 +163,7 @@ async fn stream(
             println!(
                 "{} Forced to Disconnect | Reason -> Slow Consumer",
                 format!("{}:{}", listener.ip, listener.port)
-            );      
+            );
             break;
         }
 

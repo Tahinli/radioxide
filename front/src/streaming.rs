@@ -1,24 +1,22 @@
-use std::{io::Write, mem::MaybeUninit, sync::Arc, time::Duration};
+use std::{io::Write, mem::MaybeUninit, sync::Arc};
 
 use brotli::DecompressorWriter;
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+
 use dioxus::{
     prelude::spawn,
     signals::{Signal, Writable},
 };
 use futures_util::{stream::SplitStream, SinkExt, StreamExt};
 
-use ringbuf::{Consumer, HeapRb, Producer, SharedRb};
+use ringbuf::{HeapRb, Producer, SharedRb};
 use tokio_tungstenite_wasm::{Message, WebSocketStream};
 
-static BUFFER_LENGTH: usize = 1000000;
-static BUFFER_LIMIT: usize = BUFFER_LENGTH/100*90;
+use crate::{listening::listen_podcast, BUFFER_LENGTH};
 
 pub async fn start_listening(
     mut is_maintaining: Signal<(bool, bool)>,
     mut is_listening: Signal<bool>,
 ) {
-    //seperate record and stream, refactor
     if is_listening() {
         log::info!("Trying Sir");
         let connect_addr = "ws://192.168.1.2:2424";
@@ -61,10 +59,9 @@ pub async fn sound_stream(
 
     while let Some(message_with_question) = stream_consumer.next().await {
         if is_listening() {
-            
             //log::info!("{}", message_with_question.unwrap().len());
-            let mut data:Vec<u8> = vec![];
-            if let Message::Binary(message) =  message_with_question.unwrap() {
+            let mut data: Vec<u8> = vec![];
+            if let Message::Binary(message) = message_with_question.unwrap() {
                 data = message;
             }
 
@@ -72,15 +69,17 @@ pub async fn sound_stream(
             if let Err(err_val) = decompression_writer.write_all(&data) {
                 log::error!("Error: Decompression | {}", err_val);
             }
-            let uncompressed_data = 
-            match decompression_writer.into_inner() {
+            let uncompressed_data = match decompression_writer.into_inner() {
                 Ok(healty_packet) => healty_packet,
-                Err(unhealty_packet) => {log::warn!("Warning: Unhealty Packet | {}", unhealty_packet.len());unhealty_packet},
+                Err(unhealty_packet) => {
+                    log::warn!("Warning: Unhealty Packet | {}", unhealty_packet.len());
+                    unhealty_packet
+                }
             };
 
             let data = String::from_utf8(uncompressed_data).unwrap();
-            let mut datum_parsed:Vec<char> = vec![];
-            let mut data_parsed:Vec<String> = vec![];
+            let mut datum_parsed: Vec<char> = vec![];
+            let mut data_parsed: Vec<String> = vec![];
             for char in data.chars() {
                 if char == '+' || char == '-' {
                     data_parsed.push(datum_parsed.iter().collect());
@@ -100,7 +99,7 @@ pub async fn sound_stream(
                     Ok(sample) => sample,
                     Err(_) => 0.0,
                 };
-                if let Err(_) = producer.push(sample){}
+                if let Err(_) = producer.push(sample) {}
             }
         } else {
             break;
@@ -108,42 +107,4 @@ pub async fn sound_stream(
     }
 
     log::info!("Connection Lost Sir");
-}
-async fn listen_podcast(
-    is_listening: Signal<bool>,
-    mut consumer: Consumer<f32, Arc<SharedRb<f32, Vec<MaybeUninit<f32>>>>>,
-) {
-    log::info!("Attention! Show must start!");
-    let host = cpal::default_host();
-    let output_device = host.default_output_device().unwrap();
-    let config: cpal::StreamConfig = output_device.default_output_config().unwrap().into();
-
-    let output_data_fn = move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-        if consumer.len() > BUFFER_LIMIT {
-            consumer.clear();
-            log::error!("Slow Consumer: DROPPED ALL Packets");
-        }
-        for sample in data {
-            *sample = match consumer.pop() {
-                Some(s) => s,
-                None => 0.0,
-            };
-        }
-    };
-
-    let output_stream = output_device
-        .build_output_stream(&config, output_data_fn, err_fn, None)
-        .unwrap();
-
-    output_stream.play().unwrap();
-
-    while is_listening() {
-        tokio_with_wasm::tokio::time::sleep(Duration::from_secs(1)).await;
-    }
-
-    output_stream.pause().unwrap();
-    log::info!("Attention! Time to turn home!");
-}
-fn err_fn(err: cpal::StreamError) {
-    eprintln!("Something Happened: {}", err);
 }
