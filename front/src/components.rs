@@ -107,12 +107,13 @@ pub fn coin_status_renderer(server_address: String) -> Element {
             is_loading.set(true);
             async move {
                 match coin_status_check(&server_address).await {
-                    Ok(coin_status) => {
+                    Some(coin_status) => {
                         is_loading.set(false);
                         coin_result.set(coin_status);
                     }
-                    Err(_) => {
+                    None => {
                         is_loading.set(false);
+                        coin_result.set(CoinStatus { status: Coin::Dead });
                     }
                 }
             }
