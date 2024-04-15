@@ -20,6 +20,7 @@ pub async fn start_listening(
     if is_listening() {
         log::info!("Trying Sir");
         let connect_addr = "ws://192.168.1.2:2424";
+
         let (mut stream_producer, stream_consumer);
         match tokio_tungstenite_wasm::connect(connect_addr).await {
             Ok(ws_stream) => (stream_producer, stream_consumer) = ws_stream.split(),
