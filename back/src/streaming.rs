@@ -6,7 +6,7 @@ use std::{
 };
 
 use futures_util::{SinkExt, StreamExt};
-use rustls_pemfile::{certs, pkcs8_private_keys, private_key, rsa_private_keys};
+use rustls_pemfile::{certs, pkcs8_private_keys};
 
 use tokio::{
     net::{TcpListener, TcpStream},
@@ -14,12 +14,7 @@ use tokio::{
     time::Instant,
 };
 use tokio_rustls::{
-    rustls::{
-        client::danger::DangerousClientConfig,
-        internal::msgs::handshake::CertificateChain,
-        pki_types::{CertificateDer, PrivateKeyDer},
-        ClientConfig,
-    },
+    rustls::pki_types::{CertificateDer, PrivateKeyDer},
     server::TlsStream,
     TlsAcceptor,
 };
