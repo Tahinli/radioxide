@@ -10,11 +10,11 @@ use crate::BUFFER_LENGTH;
 const MAX_TOLERATED_MESSAGE_COUNT: usize = 10;
 
 pub async fn start(sound_stream_consumer: Receiver<f32>) {
-    let connect_addr = "wss://192.168.1.2:2525";
+    let connect_addr = "wss://tahinli.com.tr:2525";
     let config = rustls_platform_verifier::tls_config();
     
     
-    let connector = tokio_tungstenite::Connector::Rustls(Arc::new(config));
+    let connector = Connector::Rustls(Arc::new(config));
     let ws_stream;
     
     match tokio_tungstenite::connect_async_tls_with_config(connect_addr, None, false, Some(connector)).await {
