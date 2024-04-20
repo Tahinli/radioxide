@@ -84,7 +84,8 @@ pub async fn start() {
     tokio::spawn(buffer_layer(message_consumer, buffered_producer.clone()));
     tokio::spawn(status_checker(buffered_producer.clone(), timer));
     while let Ok((tcp_stream, listener_info)) = socket.accept().await {
-        let ws_stream = tokio_tungstenite::accept_async(tcp_stream).await.unwrap();
+        let streamer_tcp_tls = acceptor.accept(tcp_stream).await.unwrap();
+        let ws_stream = tokio_tungstenite::accept_async(streamer_tcp_tls).await.unwrap();
         println!("New Listener: {} | {:#?}", listener_info, timer.elapsed());
         let new_listener = Listener {
             ip: listener_info.ip(),
@@ -186,7 +187,7 @@ async fn message_organizer(
 }
 async fn stream(
     listener: Listener,
-    mut ws_stream: WebSocketStream<TcpStream>,
+    mut ws_stream: WebSocketStream<TlsStream<TcpStream>>,
     mut buffered_consumer: Receiver<Message>,
 ) {
     while let Ok(message) = buffered_consumer.recv().await {
