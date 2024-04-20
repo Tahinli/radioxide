@@ -1,0 +1,3 @@
+address: tahinli.com.tr:2525
+quality: 6
+latency: 100
