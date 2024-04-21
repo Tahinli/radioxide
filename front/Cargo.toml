@@ -9,13 +9,15 @@ edition = "2021"
 anyhow = "1.0.81"
 brotli = "5.0.0"
 cpal = { version = "0.15.3", features = ["wasm-bindgen"] }
-dioxus = { version = "0.5.0", features = ["web"] }
+dioxus = { version = "0.5.1", features = ["web"] }
 futures-core = "0.3.30"
 futures-util = { version = "0.3.30", features = ["futures-sink", "sink"] }
+#getrandom = { version = "0.2.14", features = ["js"] }
 log = "0.4.21"
 reqwest = { version = "0.12.2", features = ["json"] }
 ringbuf = "0.3.3"
+#rustls-platform-verifier = "0.2.0"
 serde = { version = "1.0.197", features = ["derive"] }
-tokio-tungstenite-wasm = "0.3.1"
+tokio-tungstenite-wasm = { version = "0.3.1", features = ["rustls-tls-webpki-roots"] }
 tokio_with_wasm = "0.4.3"
 wasm-logger = "0.2.0"

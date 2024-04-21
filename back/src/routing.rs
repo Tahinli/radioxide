@@ -1,4 +1,4 @@
-use crate::{streaming, AppState, CoinStatus, ServerStatus};
+use crate::{AppState, CoinStatus, ServerStatus};
 use axum::{
     body::Body, extract::State, http::StatusCode, response::IntoResponse, routing::get, Json,
     Router,
@@ -42,7 +42,6 @@ async fn flip_coin() -> impl IntoResponse {
 #[axum::debug_handler]
 async fn stream() -> impl IntoResponse {
     println!("Stream");
-    streaming::start().await;
     let file = File::open("audios/audio.mp3").await.unwrap();
     let stream = ReaderStream::new(file);
     Body::from_stream(stream)
