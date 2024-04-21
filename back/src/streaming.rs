@@ -9,26 +9,29 @@ use futures_util::{SinkExt, StreamExt};
 use rustls_pemfile::{certs, pkcs8_private_keys};
 
 use tokio::{
-    net::{TcpListener, TcpStream},
+    net::TcpListener,
     sync::broadcast::{channel, Receiver, Sender},
     time::Instant,
 };
 use tokio_rustls::{
     rustls::pki_types::{CertificateDer, PrivateKeyDer},
-    server::TlsStream,
     TlsAcceptor,
 };
-use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
+use tokio_tungstenite::tungstenite::{Error, Message};
 
-use crate::{Listener, Streamer};
+use crate::{Config, Listener, Streamer};
 
 const BUFFER_LENGTH: usize = 1000000;
 const MAX_TOLERATED_MESSAGE_COUNT: usize = 10;
-pub async fn start() {
+pub async fn start(relay_configs: Config) {
     //need to move them for multi streamer
-    let socket = TcpListener::bind("192.168.1.2:2424").await.unwrap();
+    let listener_socket = TcpListener::bind(relay_configs.listener_address)
+        .await
+        .unwrap();
     let (record_producer, record_consumer) = channel(BUFFER_LENGTH);
-    let streamer_socket = TcpListener::bind("192.168.1.2:2525").await.unwrap();
+    let streamer_socket = TcpListener::bind(relay_configs.streamer_address)
+        .await
+        .unwrap();
     let timer = Instant::now();
 
     let fullchain: io::Result<Vec<CertificateDer<'static>>> = certs(&mut BufReader::new(
@@ -44,35 +47,50 @@ pub async fn start() {
     .map(Into::into);
     let privkey = privkey.unwrap();
 
-    let config = tokio_rustls::rustls::ServerConfig::builder()
+    let server_tls_config = tokio_rustls::rustls::ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(fullchain, privkey)
         .unwrap();
-    let acceptor = TlsAcceptor::from(Arc::new(config));
+    let acceptor = TlsAcceptor::from(Arc::new(server_tls_config));
     loop {
         match streamer_socket.accept().await {
             Ok((streamer_tcp, streamer_info)) => {
-                let streamer_tcp_tls = acceptor.accept(streamer_tcp).await.unwrap();
-                match tokio_tungstenite::accept_async(streamer_tcp_tls).await {
-                    Ok(ws_stream) => {
-                        println!(
-                            "New Streamer: {:#?} | {:#?}",
-                            streamer_info,
-                            timer.elapsed()
-                        );
-                        let new_streamer = Streamer {
-                            ip: streamer_info.ip(),
-                            port: streamer_info.port(),
-                        };
-                        tokio::spawn(streamer_stream(
-                            new_streamer,
-                            record_producer,
-                            ws_stream,
-                            timer,
-                        ));
-                        break;
+                let new_streamer = Streamer {
+                    ip: streamer_info.ip(),
+                    port: streamer_info.port(),
+                };
+                println!(
+                    "New Streamer: {:#?} | {:#?}",
+                    streamer_info,
+                    timer.elapsed()
+                );
+                if relay_configs.tls {
+                    let streamer_tcp_tls = acceptor.accept(streamer_tcp).await.unwrap();
+                    match tokio_tungstenite::accept_async(streamer_tcp_tls).await {
+                        Ok(ws_stream) => {
+                            tokio::spawn(streamer_stream(
+                                new_streamer,
+                                record_producer,
+                                ws_stream,
+                                timer,
+                            ));
+                            break;
+                        }
+                        Err(err_val) => eprintln!("Error: TCP to WS Transform | {}", err_val),
                     }
-                    Err(err_val) => eprintln!("Error: TCP to WS Transform | {}", err_val),
+                } else {
+                    match tokio_tungstenite::accept_async(streamer_tcp).await {
+                        Ok(ws_stream) => {
+                            tokio::spawn(streamer_stream(
+                                new_streamer,
+                                record_producer,
+                                ws_stream,
+                                timer,
+                            ));
+                            break;
+                        }
+                        Err(err_val) => eprintln!("Error: TCP to WS Transform | {}", err_val),
+                    }
                 }
             }
             Err(err_val) => eprintln!("Error: TCP Accept Connection | {}", err_val),
@@ -80,22 +98,41 @@ pub async fn start() {
     }
     let (message_producer, message_consumer) = channel(BUFFER_LENGTH);
     let (buffered_producer, _) = channel(BUFFER_LENGTH);
-    tokio::spawn(message_organizer(message_producer.clone(), record_consumer));
-    tokio::spawn(buffer_layer(message_consumer, buffered_producer.clone()));
+    tokio::spawn(message_organizer(
+        message_producer.clone(),
+        record_consumer,
+        relay_configs.latency,
+    ));
+    tokio::spawn(buffer_layer(
+        message_consumer,
+        buffered_producer.clone(),
+        relay_configs.latency,
+    ));
     tokio::spawn(status_checker(buffered_producer.clone(), timer));
-    while let Ok((tcp_stream, listener_info)) = socket.accept().await {
-        let streamer_tcp_tls = acceptor.accept(tcp_stream).await.unwrap();
-        let ws_stream = tokio_tungstenite::accept_async(streamer_tcp_tls).await.unwrap();
-        println!("New Listener: {} | {:#?}", listener_info, timer.elapsed());
+    while let Ok((tcp_stream, listener_info)) = listener_socket.accept().await {
         let new_listener = Listener {
             ip: listener_info.ip(),
             port: listener_info.port(),
         };
-        tokio::spawn(stream(
-            new_listener,
-            ws_stream,
-            buffered_producer.subscribe(),
-        ));
+        if relay_configs.tls {
+            let streamer_tcp_tls = acceptor.accept(tcp_stream).await.unwrap();
+            let wss_stream = tokio_tungstenite::accept_async(streamer_tcp_tls)
+                .await
+                .unwrap();
+            tokio::spawn(stream(
+                new_listener,
+                wss_stream,
+                buffered_producer.subscribe(),
+            ));
+        } else {
+            let ws_stream = tokio_tungstenite::accept_async(tcp_stream).await.unwrap();
+            tokio::spawn(stream(
+                new_listener,
+                ws_stream,
+                buffered_producer.subscribe(),
+            ));
+        }
+        println!("New Listener: {} | {:#?}", listener_info, timer.elapsed());
     }
 }
 async fn status_checker(buffered_producer: Sender<Message>, timer: Instant) {
@@ -124,9 +161,13 @@ async fn status_checker(buffered_producer: Sender<Message>, timer: Instant) {
         }
     }
 }
-async fn buffer_layer(mut message_consumer: Receiver<Message>, buffered_producer: Sender<Message>) {
+async fn buffer_layer(
+    mut message_consumer: Receiver<Message>,
+    buffered_producer: Sender<Message>,
+    delay: u16,
+) {
     loop {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(delay.into())).await;
         while message_consumer.len() > 0 {
             match message_consumer.recv().await {
                 Ok(message) => match buffered_producer.send(message) {
@@ -138,10 +179,12 @@ async fn buffer_layer(mut message_consumer: Receiver<Message>, buffered_producer
         }
     }
 }
-async fn streamer_stream(
+async fn streamer_stream<
+    T: futures_util::Stream<Item = Result<Message, Error>> + std::marker::Unpin,
+>(
     streamer: Streamer,
     record_producer: Sender<Message>,
-    mut ws_stream: WebSocketStream<TlsStream<TcpStream>>,
+    mut ws_stream: T,
     timer: Instant,
 ) {
     loop {
@@ -173,6 +216,7 @@ async fn streamer_stream(
 async fn message_organizer(
     message_producer: Sender<Message>,
     mut record_consumer: Receiver<Message>,
+    delay: u16,
 ) {
     loop {
         match record_consumer.recv().await {
@@ -182,12 +226,12 @@ async fn message_organizer(
             },
             Err(_) => {}
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(delay.into())).await;
     }
 }
-async fn stream(
+async fn stream<T: futures_util::Sink<Message> + std::marker::Unpin>(
     listener: Listener,
-    mut ws_stream: WebSocketStream<TlsStream<TcpStream>>,
+    mut ws_stream: T,
     mut buffered_consumer: Receiver<Message>,
 ) {
     while let Ok(message) = buffered_consumer.recv().await {

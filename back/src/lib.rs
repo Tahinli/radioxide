@@ -7,6 +7,15 @@ pub mod streaming;
 pub mod utils;
 
 #[derive(Debug, Clone)]
+pub struct Config {
+    pub axum_address: String,
+    pub listener_address: String,
+    pub streamer_address: String,
+    pub latency: u16,
+    pub tls: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct AppState {}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
