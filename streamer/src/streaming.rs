@@ -9,7 +9,7 @@ use tokio_tungstenite::tungstenite::Message;
 use crate::{Config, BUFFER_LENGTH};
 const MAX_TOLERATED_MESSAGE_COUNT: usize = 10;
 
-pub async fn start(sound_stream_consumer: Receiver<f32>, streamer_config:Config) {
+pub async fn connect(sound_stream_consumer: Receiver<f32>, streamer_config:Config) {
     let connect_addr = 
     match streamer_config.tls {
         true => format!("wss://{}", streamer_config.address),

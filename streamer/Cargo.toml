@@ -9,6 +9,7 @@ edition = "2021"
 brotli = "5.0.0"
 cpal = "0.15.3"
 futures-util = { version = "0.3.30", features = ["futures-sink", "sink"] }
+iced = { git = "https://github.com/iced-rs/iced", features = ["tokio"] }
 ringbuf = "0.3.3"
 rustls-pemfile = "2.1.2"
 rustls-platform-verifier = "0.2.0"
