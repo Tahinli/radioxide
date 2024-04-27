@@ -1,7 +1,10 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use tokio::sync::broadcast::Sender;
+use tokio::sync::broadcast::{Receiver, Sender};
 
-pub async fn record(sound_stream_producer: Sender<f32>) {
+pub async fn record(
+    sound_stream_producer: Sender<f32>,
+    mut stop_recording_consumer: Receiver<bool>,
+) {
     let host = cpal::default_host();
     let input_device = host.default_input_device().unwrap();
 
@@ -22,8 +25,11 @@ pub async fn record(sound_stream_producer: Sender<f32>) {
 
     input_stream.play().unwrap();
     println!("Recording Started");
-    std::thread::sleep(std::time::Duration::from_secs(1000000000));
-    println!("DONE I HOPE");
+    while let Err(_) = stop_recording_consumer.try_recv() {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    input_stream.pause().unwrap();
+    println!("Recording Stopped");
 }
 fn err_fn(err: cpal::StreamError) {
     eprintln!("Something Happened: {}", err);
