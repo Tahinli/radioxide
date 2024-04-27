@@ -16,6 +16,7 @@ pub async fn connect(
     sound_stream_consumer: Receiver<f32>,
     streamer_config: Config,
     mut stop_connection_consumer: Receiver<bool>,
+    connection_cleaning_status_producer: Sender<bool>,
 ) {
     let connect_addr = match streamer_config.tls {
         true => format!("wss://{}", streamer_config.address),
@@ -64,6 +65,7 @@ pub async fn connect(
             message_organizer_task,
             stream_task,
             stop_connection_consumer,
+            connection_cleaning_status_producer,
         ));
     }
 }
@@ -168,11 +170,17 @@ async fn status_checker(
     message_organizer_task: JoinHandle<()>,
     stream_task: JoinHandle<()>,
     mut stop_connection_consumer: Receiver<bool>,
+    connection_cleaning_status_producer: Sender<bool>,
 ) {
+    let mut connection_cleaning_status_consumer = connection_cleaning_status_producer.subscribe();
+    connection_cleaning_status_producer.send(true).unwrap();
     while let Err(_) = stop_connection_consumer.try_recv() {
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
     stream_task.abort();
     message_organizer_task.abort();
+    while let Ok(_) = connection_cleaning_status_consumer.try_recv() {}
+    drop(connection_cleaning_status_consumer);
+    drop(connection_cleaning_status_producer);
     println!("Cleaning Done: Streamer Disconnected");
 }
