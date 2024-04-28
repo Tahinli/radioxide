@@ -1,4 +1,5 @@
 pub mod gui;
+pub mod gui_utils;
 pub mod recording;
 pub mod streaming;
 pub mod utils;

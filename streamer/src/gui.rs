@@ -1,27 +1,70 @@
 use iced::{
-    widget::{button, column, container, Container},
+    widget::{container, row, Container},
     Command,
 };
 use tokio::sync::broadcast::{channel, Sender};
 
-use crate::{recording, streaming, utils::get_config, Config, BUFFER_LENGTH};
+use crate::{
+    gui_utils::button_with_centered_text, recording, streaming, utils::get_config, Config, BUFFER_LENGTH
+};
+#[derive(Debug, Clone)]
+pub enum Event {
+    Connect,
+    Disconnect,
+    Record,
+    StopRecord,
+    PlayAudio,
+    StopAudio,
+    LoadConfig(Config),
+}
+#[derive(Debug, Clone)]
+
+pub enum State {
+    Connected,
+    Disconnected,
+    Recording,
+    StopRecording,
+    PlayingAudio,
+    StopAudio,
+}
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    StartStreaming,
-    StopStreaming,
-    ConfigLoad(Config),
+    Event(Event),
+    State(State),
+}
+#[derive(Debug)]
+struct DataChannel {
+    sound_stream_sender: Sender<f32>,
+}
+#[derive(Debug)]
+struct CommunicationChannel {
+    base_to_streaming: Sender<bool>,
+    streaming_to_base: Sender<bool>,
+    base_to_recording: Sender<bool>,
+    recording_to_base: Sender<bool>,
+    base_to_playing: Sender<bool>,
+    playing_to_base: Sender<bool>,
+}
+#[derive(Debug)]
+enum Condition {
+    Active,
+    Loading,
+    Passive,
 }
 
 #[derive(Debug)]
+struct GUIStatus {
+    are_we_connect: Condition,
+    are_we_record: Condition,
+    are_we_play_audio: Condition,
+}
+#[derive(Debug)]
 pub struct Streamer {
     config: Option<Config>,
-    sound_stream_producer: Sender<f32>,
-    stop_connection_producer: Sender<bool>,
-    stop_recording_producer: Sender<bool>,
-    connection_cleaning_status_producer: Sender<bool>,
-    are_we_streaming: bool,
-    are_we_recovering: bool,
+    data_channel: DataChannel,
+    communication_channel: CommunicationChannel,
+    gui_status: GUIStatus,
 }
 impl Default for Streamer {
     fn default() -> Self {
@@ -33,81 +76,226 @@ impl Streamer {
     fn new() -> Self {
         Self {
             config: None,
-            sound_stream_producer: channel(BUFFER_LENGTH).0,
-            stop_connection_producer: channel(BUFFER_LENGTH).0,
-            stop_recording_producer: channel(BUFFER_LENGTH).0,
-            connection_cleaning_status_producer: channel(BUFFER_LENGTH).0,
-            are_we_streaming: false,
-            are_we_recovering: false,
+            data_channel: DataChannel {
+                sound_stream_sender: channel(BUFFER_LENGTH).0,
+            },
+            communication_channel: CommunicationChannel {
+                base_to_streaming: channel(1).0,
+                streaming_to_base: channel(1).0,
+                base_to_recording: channel(1).0,
+                recording_to_base: channel(1).0,
+                base_to_playing: channel(1).0,
+                playing_to_base: channel(1).0,
+            },
+            gui_status: GUIStatus {
+                are_we_connect: Condition::Passive,
+                are_we_record: Condition::Passive,
+                are_we_play_audio: Condition::Passive,
+            },
         }
     }
-    pub fn update(&mut self, message: Message) {
+    pub fn update(&mut self, message: Message) -> Command<Message> {
         match message {
-            Message::StartStreaming => {
-                if !self.are_we_recovering && !self.are_we_streaming {
-                    println!("Start Stream");
-                    self.are_we_recovering = true;
-                    self.are_we_streaming = true;
+            Message::Event(event) => match event {
+                Event::Connect => {
+                    println!("Connect");
+                    self.gui_status.are_we_connect = Condition::Loading;
+                    let mut streaming_to_base_receiver =
+                        self.communication_channel.streaming_to_base.subscribe();
                     tokio::spawn(streaming::connect(
-                        self.sound_stream_producer.subscribe(),
+                        self.data_channel.sound_stream_sender.subscribe(),
                         self.config.clone().unwrap(),
-                        self.stop_connection_producer.subscribe(),
-                        self.connection_cleaning_status_producer.clone(),
+                        self.communication_channel.base_to_streaming.subscribe(),
+                        self.communication_channel.streaming_to_base.clone(),
                     ));
+                    Command::perform(
+                        async move {
+                            match streaming_to_base_receiver.recv().await {
+                                Ok(_) => State::Connected,
+                                Err(err_val) => {
+                                    eprintln!("Error: Communication | {}", err_val);
+                                    State::Disconnected
+                                }
+                            }
+                        },
+                        Message::State,
+                    )
+                }
+                Event::Disconnect => {
+                    println!("Disconnect");
+                    self.gui_status.are_we_connect = Condition::Loading;
+                    let mut streaming_to_base_receiver =
+                        self.communication_channel.streaming_to_base.subscribe();
+                    let _ = self.communication_channel.base_to_streaming.send(false);
+                    Command::perform(
+                        async move {
+                            match streaming_to_base_receiver.recv().await {
+                                Ok(_) => State::Disconnected,
+                                Err(err_val) => {
+                                    eprintln!("Error: Communication | {}", err_val);
+                                    State::Connected
+                                }
+                            }
+                        },
+                        Message::State,
+                    )
+                }
+                Event::Record => {
+                    println!("Record");
+                    self.gui_status.are_we_record = Condition::Loading;
+                    let mut recording_to_base_receiver =
+                        self.communication_channel.recording_to_base.subscribe();
                     tokio::spawn(recording::record(
-                        self.sound_stream_producer.clone(),
-                        self.stop_recording_producer.subscribe(),
+                        self.data_channel.sound_stream_sender.clone(),
+                        self.communication_channel.base_to_recording.subscribe(),
+                        self.communication_channel.recording_to_base.clone(),
                     ));
-                    self.are_we_recovering = false;
+                    Command::perform(
+                        async move {
+                            match recording_to_base_receiver.recv().await {
+                                Ok(_) => State::Recording,
+                                Err(err_val) => {
+                                    eprintln!("Error: Communication | Streaming | {}", err_val);
+                                    State::StopRecording
+                                }
+                            }
+                        },
+                        Message::State,
+                    )
                 }
-            }
-            Message::StopStreaming => {
-                if !self.are_we_recovering && self.are_we_streaming {
-                    println!("Stop Stream");
-                    self.are_we_recovering = true;
-                    self.are_we_streaming = false;
-                    let _ = self.connection_cleaning_status_producer.send(true);
-                    let _ = self.stop_connection_producer.send(true);
-                    let _ = self.stop_recording_producer.send(true);
-                    while !self.connection_cleaning_status_producer.is_empty() {}
-                    self.are_we_recovering = false;
+                Event::StopRecord => {
+                    println!("Stop Record");
+                    self.gui_status.are_we_record = Condition::Loading;
+                    let mut recording_to_base_receiver =
+                        self.communication_channel.recording_to_base.subscribe();
+                    let _ = self.communication_channel.base_to_recording.send(false);
+                    Command::perform(
+                        async move {
+                            match recording_to_base_receiver.recv().await {
+                                Ok(_) => State::StopRecording,
+                                Err(err_val) => {
+                                    eprintln!("Error: Communication | Recording | {}", err_val);
+                                    State::Recording
+                                }
+                            }
+                        },
+                        Message::State,
+                    )
                 }
-            }
-            Message::ConfigLoad(config) => {
-                self.config = Some(config);
-            }
+                Event::PlayAudio => {
+                    println!("Play Audio");
+                    self.gui_status.are_we_play_audio = Condition::Loading;
+                    let mut playing_to_base_receiver =
+                        self.communication_channel.playing_to_base.subscribe();
+                    //tokio::spawn(future);
+                    Command::perform(
+                        async move {
+                            match playing_to_base_receiver.recv().await {
+                                Ok(_) => State::PlayingAudio,
+                                Err(err_val) => {
+                                    eprint!("Error: Communication | Playing | {}", err_val);
+                                    State::StopAudio
+                                }
+                            }
+                        },
+                        Message::State,
+                    )
+                }
+                Event::StopAudio => {
+                    println!("Stop Audio");
+                    self.gui_status.are_we_play_audio = Condition::Loading;
+                    let mut playing_to_base_receiver =
+                        self.communication_channel.playing_to_base.subscribe();
+                    let _ = self.communication_channel.base_to_playing.send(false);
+                    Command::perform(
+                        async move {
+                            match playing_to_base_receiver.recv().await {
+                                Ok(_) => State::StopAudio,
+                                Err(err_val) => {
+                                    eprint!("Error: Communication | Playing | {}", err_val);
+                                    State::PlayingAudio
+                                }
+                            }
+                        },
+                        Message::State,
+                    )
+                }
+                Event::LoadConfig(config) => {
+                    self.config = Some(config);
+                    Command::none()
+                }
+            },
+            Message::State(state) => match state {
+                State::Connected => {
+                    self.gui_status.are_we_connect = Condition::Active;
+                    Command::none()
+                }
+                State::Disconnected => {
+                    self.gui_status.are_we_connect = Condition::Passive;
+                    Command::none()
+                }
+                State::Recording => {
+                    self.gui_status.are_we_record = Condition::Active;
+                    Command::none()
+                }
+                State::StopRecording => {
+                    self.gui_status.are_we_record = Condition::Passive;
+                    Command::none()
+                }
+                State::PlayingAudio => {
+                    self.gui_status.are_we_play_audio = Condition::Active;
+                    Command::none()
+                }
+                State::StopAudio => {
+                    self.gui_status.are_we_play_audio = Condition::Passive;
+                    Command::none()
+                }
+            },
         }
     }
     pub fn view(&self) -> Container<Message> {
-        let column = match self.are_we_streaming {
-            true => match self.are_we_recovering {
-                true => {
-                    column![button("Stop Streaming").width(100),]
-                }
-                false => {
-                    column![button("Stop Streaming")
-                        .width(100)
-                        .on_press(Message::StopStreaming),]
-                }
-            },
-            false => match self.are_we_recovering {
-                true => {
-                    column![button("Start Streaming").width(100),]
-                }
-                false => {
-                    column![button("Start Streaming")
-                        .width(100)
-                        .on_press(Message::StartStreaming),]
-                }
-            },
+        let connect_button = match self.gui_status.are_we_connect {
+            Condition::Active => {
+                button_with_centered_text("Disconnect").on_press(Message::Event(Event::Disconnect))
+            }
+            Condition::Loading => button_with_centered_text("Processing"),
+            Condition::Passive => {
+                button_with_centered_text("Connect").on_press(Message::Event(Event::Connect))
+            }
         };
-        container(column)
-            .width(200)
-            .height(200)
-            .center_x()
-            .center_y()
+
+        let record_button = match self.gui_status.are_we_record {
+            Condition::Active => {
+                button_with_centered_text("Stop Record").on_press(Message::Event(Event::StopRecord))
+            }
+            Condition::Loading => button_with_centered_text("Processing"),
+            Condition::Passive => {
+                button_with_centered_text("Record").on_press(Message::Event(Event::Record))
+            }
+        };
+
+        let play_audio_button =
+            match self.gui_status.are_we_play_audio {
+                Condition::Active => button_with_centered_text("Stop Audio")
+                    .on_press(Message::Event(Event::StopAudio)),
+                Condition::Loading => button_with_centered_text("Processing"),
+                Condition::Passive => button_with_centered_text("Play Audio")
+                    .on_press(Message::Event(Event::PlayAudio)),
+            };
+
+        let content = row![connect_button, record_button, play_audio_button]
+            .spacing(20)
+            .width(400)
+            .height(35);
+        container(content).height(300).center_x().center_y()
     }
     pub fn load_config() -> Command<Message> {
-        Command::perform(get_config(), Message::ConfigLoad)
+        Command::perform(
+            async move {
+                let config = get_config().await;
+                Event::LoadConfig(config)
+            },
+            Message::Event,
+        )
     }
 }

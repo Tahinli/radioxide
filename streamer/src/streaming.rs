@@ -13,17 +13,17 @@ use crate::{Config, BUFFER_LENGTH};
 const MAX_TOLERATED_MESSAGE_COUNT: usize = 10;
 
 pub async fn connect(
-    sound_stream_consumer: Receiver<f32>,
+    sound_stream_receiver: Receiver<f32>,
     streamer_config: Config,
-    mut stop_connection_consumer: Receiver<bool>,
-    connection_cleaning_status_producer: Sender<bool>,
+    mut base_to_streaming: Receiver<bool>,
+    streaming_to_base: Sender<bool>,
 ) {
     let connect_addr = match streamer_config.tls {
         true => format!("wss://{}", streamer_config.address),
         false => format!("ws://{}", streamer_config.address),
     };
 
-    if let Err(_) = stop_connection_consumer.try_recv() {
+    if let Err(_) = base_to_streaming.try_recv() {
         let ws_stream;
         match streamer_config.tls {
             true => {
@@ -56,35 +56,36 @@ pub async fn connect(
         println!("Connected to: {}", connect_addr);
         let message_organizer_task = tokio::spawn(message_organizer(
             message_producer,
-            sound_stream_consumer,
+            sound_stream_receiver,
             streamer_config.quality,
             streamer_config.latency,
         ));
         let stream_task = tokio::spawn(stream(ws_stream, message_consumer));
+        let _ = streaming_to_base.send(true);
         tokio::spawn(status_checker(
             message_organizer_task,
             stream_task,
-            stop_connection_consumer,
-            connection_cleaning_status_producer,
+            base_to_streaming,
+            streaming_to_base,
         ));
     }
 }
 
 async fn message_organizer(
     message_producer: Sender<Message>,
-    mut consumer: Receiver<f32>,
+    mut receiver: Receiver<f32>,
     quality: u8,
     latency: u16,
 ) {
     loop {
         let mut messages: Vec<u8> = Vec::new();
-        let mut iteration = consumer.len();
+        let mut iteration = receiver.len();
         while iteration > 0 {
             iteration -= 1;
-            match consumer.recv().await {
+            match receiver.recv().await {
                 Ok(single_data) => {
                     let ring = HeapRb::<u8>::new(BUFFER_LENGTH);
-                    let (mut producer, mut consumer) = ring.split();
+                    let (mut producer, mut receiver) = ring.split();
                     let mut charred: Vec<char> = single_data.to_string().chars().collect();
                     if charred[0] == '0' {
                         charred.insert(0, '+');
@@ -104,8 +105,8 @@ async fn message_organizer(
                     for element in single_data_packet {
                         producer.push(element).unwrap();
                     }
-                    while !consumer.is_empty() {
-                        messages.push(consumer.pop().unwrap());
+                    while !receiver.is_empty() {
+                        messages.push(receiver.pop().unwrap());
                     }
                 }
                 Err(_) => {}
@@ -169,18 +170,14 @@ async fn stream<T: futures_util::Sink<Message> + std::marker::Unpin>(
 async fn status_checker(
     message_organizer_task: JoinHandle<()>,
     stream_task: JoinHandle<()>,
-    mut stop_connection_consumer: Receiver<bool>,
-    connection_cleaning_status_producer: Sender<bool>,
+    mut base_to_streaming: Receiver<bool>,
+    streaming_to_base: Sender<bool>,
 ) {
-    let mut connection_cleaning_status_consumer = connection_cleaning_status_producer.subscribe();
-    connection_cleaning_status_producer.send(true).unwrap();
-    while let Err(_) = stop_connection_consumer.try_recv() {
+    while let Err(_) = base_to_streaming.try_recv() {
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
     stream_task.abort();
     message_organizer_task.abort();
-    while let Ok(_) = connection_cleaning_status_consumer.try_recv() {}
-    drop(connection_cleaning_status_consumer);
-    drop(connection_cleaning_status_producer);
+    let _ = streaming_to_base.send(true);
     println!("Cleaning Done: Streamer Disconnected");
 }
