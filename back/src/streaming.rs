@@ -26,25 +26,7 @@ const BUFFER_LENGTH: usize = 1000000;
 const MAX_TOLERATED_MESSAGE_COUNT: usize = 10;
 pub async fn start(relay_configs: Config) {
     let timer = Instant::now();
-
-    let fullchain: io::Result<Vec<CertificateDer<'static>>> = certs(&mut BufReader::new(
-        File::open("certificates/fullchain.pem").unwrap(),
-    ))
-    .collect();
-    let fullchain = fullchain.unwrap();
-    let privkey: io::Result<PrivateKeyDer<'static>> = pkcs8_private_keys(&mut BufReader::new(
-        File::open("certificates/privkey.pem").unwrap(),
-    ))
-    .next()
-    .unwrap()
-    .map(Into::into);
-    let privkey = privkey.unwrap();
-
-    let server_tls_config = tokio_rustls::rustls::ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(fullchain, privkey)
-        .unwrap();
-    let acceptor = TlsAcceptor::from(Arc::new(server_tls_config));
+    let acceptor = tls_configurator().await;
     loop {
         //need to move them for multi streamer
         let (record_producer, record_consumer) = channel(BUFFER_LENGTH);
@@ -158,6 +140,27 @@ pub async fn start(relay_configs: Config) {
             drop(streamer_socket);
         }
     }
+}
+async fn tls_configurator() -> TlsAcceptor {
+    let fullchain: io::Result<Vec<CertificateDer<'static>>> = certs(&mut BufReader::new(
+        File::open("certificates/fullchain.pem").unwrap(),
+    ))
+    .collect();
+    let fullchain = fullchain.unwrap();
+    let privkey: io::Result<PrivateKeyDer<'static>> = pkcs8_private_keys(&mut BufReader::new(
+        File::open("certificates/privkey.pem").unwrap(),
+    ))
+    .next()
+    .unwrap()
+    .map(Into::into);
+    let privkey = privkey.unwrap();
+
+    let server_tls_config = tokio_rustls::rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(fullchain, privkey)
+        .unwrap();
+    let acceptor = TlsAcceptor::from(Arc::new(server_tls_config));
+    acceptor
 }
 async fn listener_handler(
     listener_socket: TcpListener,
