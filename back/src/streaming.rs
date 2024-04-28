@@ -47,9 +47,6 @@ pub async fn start(relay_configs: Config) {
     let acceptor = TlsAcceptor::from(Arc::new(server_tls_config));
     loop {
         //need to move them for multi streamer
-        let listener_socket = TcpListener::bind(relay_configs.listener_address.clone())
-            .await
-            .unwrap();
         let (record_producer, record_consumer) = channel(BUFFER_LENGTH);
         let streamer_socket = TcpListener::bind(relay_configs.streamer_address.clone())
             .await
@@ -64,64 +61,62 @@ pub async fn start(relay_configs: Config) {
             ip: "127.0.0.1".to_string().parse().unwrap(),
             port: 0000,
         };
-        let mut is_streaming;
-        loop {
-            is_streaming = false;
-            match streamer_socket.accept().await {
-                Ok((streamer_tcp, streamer_info)) => {
-                    new_streamer.ip = streamer_info.ip();
-                    new_streamer.port = streamer_info.port();
-                    println!(
-                        "New Streamer: {:#?} | {:#?}",
-                        streamer_info,
-                        timer.elapsed()
-                    );
-                    if relay_configs.tls {
-                        match acceptor.accept(streamer_tcp).await {
-                            Ok(streamer_tcp_tls) => {
-                                match tokio_tungstenite::accept_async(streamer_tcp_tls).await {
-                                    Ok(ws_stream) => {
-                                        tokio::spawn(streamer_stream(
-                                            new_streamer.clone(),
-                                            record_producer,
-                                            ws_stream,
-                                            timer,
-                                            streamer_alive_producer,
-                                        ));
-                                        is_streaming = true;
-                                        break;
-                                    }
-                                    Err(err_val) => {
-                                        eprintln!("Error: TCP to WS Transform | {}", err_val)
-                                    }
+        let mut is_streaming = false;
+        match streamer_socket.accept().await {
+            Ok((streamer_tcp, streamer_info)) => {
+                new_streamer.ip = streamer_info.ip();
+                new_streamer.port = streamer_info.port();
+                println!(
+                    "New Streamer: {:#?} | {:#?}",
+                    streamer_info,
+                    timer.elapsed()
+                );
+                if relay_configs.tls {
+                    match acceptor.accept(streamer_tcp).await {
+                        Ok(streamer_tcp_tls) => {
+                            match tokio_tungstenite::accept_async(streamer_tcp_tls).await {
+                                Ok(ws_stream) => {
+                                    tokio::spawn(streamer_stream(
+                                        new_streamer.clone(),
+                                        record_producer,
+                                        ws_stream,
+                                        timer,
+                                        streamer_alive_producer,
+                                    ));
+                                    is_streaming = true;
+                                }
+                                Err(err_val) => {
+                                    eprintln!("Error: TCP to WS Transform | {}", err_val)
                                 }
                             }
-                            Err(err_val) => {
-                                eprintln!("Error: TCP TLS Streamer| {}", err_val);
-                                break;
-                            }
                         }
-                    } else {
-                        match tokio_tungstenite::accept_async(streamer_tcp).await {
-                            Ok(ws_stream) => {
-                                tokio::spawn(streamer_stream(
-                                    new_streamer.clone(),
-                                    record_producer,
-                                    ws_stream,
-                                    timer,
-                                    streamer_alive_producer,
-                                ));
-                                is_streaming = true;
-                                break;
-                            }
-                            Err(err_val) => eprintln!("Error: TCP to WS Transform | {}", err_val),
+                        Err(err_val) => {
+                            eprintln!("Error: TCP TLS Streamer| {}", err_val);
                         }
                     }
+                } else {
+                    match tokio_tungstenite::accept_async(streamer_tcp).await {
+                        Ok(ws_stream) => {
+                            tokio::spawn(streamer_stream(
+                                new_streamer.clone(),
+                                record_producer,
+                                ws_stream,
+                                timer,
+                                streamer_alive_producer,
+                            ));
+                            is_streaming = true;
+                        }
+                        Err(err_val) => eprintln!("Error: TCP to WS Transform | {}", err_val),
+                    }
                 }
-                Err(err_val) => eprintln!("Error: TCP Accept Connection | {}", err_val),
             }
+            Err(err_val) => eprintln!("Error: TCP Accept Connection | {}", err_val),
         }
+
         if is_streaming {
+            let listener_socket = TcpListener::bind(relay_configs.listener_address.clone())
+                .await
+                .unwrap();
             let (message_producer, message_consumer) = channel(BUFFER_LENGTH);
             let (buffered_producer, _) = channel(BUFFER_LENGTH);
             message_organizer_task = tokio::spawn(message_organizer(
