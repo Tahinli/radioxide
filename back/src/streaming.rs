@@ -195,12 +195,14 @@ async fn listener_handler(
                                     }
                                     Err(err_val) => {
                                         eprintln!("Error: TCP WSS Listener | {}", err_val);
+                                        drop(listener_socket);
                                         return;
                                     }
                                 }
                             }
                             Err(err_val) => {
                                 eprintln!("Error: TCP TLS Listener | {}", err_val);
+                                drop(listener_socket);
                                 return;
                             }
                         }
@@ -218,6 +220,7 @@ async fn listener_handler(
                             }
                             Err(err_val) => {
                                 eprintln!("Error: TCP WS Listener | {}", err_val);
+                                drop(listener_socket);
                                 return;
                             }
                         }
