@@ -1,11 +1,13 @@
 use iced::{
-    widget::{container, row, Container},
-    window, Command, Subscription,
+    alignment, widget::{column, container, row, text::LineHeight, Container, Rule}, window, Color, Command, Subscription
 };
 use tokio::sync::broadcast::{channel, Receiver, Sender};
 
 use crate::{
-    gui_components::button_with_centered_text, gui_utils, utils::get_config, Config, BUFFER_LENGTH,
+    gui_components::{button_with_centered_text, text_centered},
+    gui_utils,
+    utils::get_config,
+    Config, BUFFER_LENGTH,
 };
 
 #[derive(Debug, Clone)]
@@ -55,8 +57,8 @@ struct CommunicationChannel {
     streaming_to_base: Sender<bool>,
     base_to_recording: Sender<bool>,
     recording_to_base: Sender<bool>,
-    base_to_playing: Sender<bool>,
-    playing_to_base: Sender<bool>,
+    base_to_playing_audio: Sender<bool>,
+    playing_audio_to_base: Sender<bool>,
 }
 #[derive(Debug, PartialEq)]
 enum Condition {
@@ -96,8 +98,8 @@ impl Streamer {
                 streaming_to_base: channel(1).0,
                 base_to_recording: channel(1).0,
                 recording_to_base: channel(1).0,
-                base_to_playing: channel(1).0,
-                playing_to_base: channel(1).0,
+                base_to_playing_audio: channel(1).0,
+                playing_audio_to_base: channel(1).0,
             },
             gui_status: GUIStatus {
                 are_we_connect: Condition::Passive,
@@ -157,7 +159,7 @@ impl Streamer {
 
                     Command::perform(
                         async move {
-                            gui_utils::record(
+                            gui_utils::start_recording(
                                 sound_stream_sender,
                                 recording_to_base,
                                 base_to_recording,
@@ -183,18 +185,19 @@ impl Streamer {
                 Event::PlayAudio => {
                     println!("Play Audio");
                     self.gui_status.are_we_play_audio = Condition::Loading;
-                    let mut playing_to_base_receiver =
-                        self.communication_channel.playing_to_base.subscribe();
-                    //tokio::spawn(future);
+
+                    let playing_audio_to_base =
+                        self.communication_channel.playing_audio_to_base.clone();
+                    let base_to_playing_audio =
+                        self.communication_channel.base_to_playing_audio.subscribe();
+
                     Command::perform(
                         async move {
-                            match playing_to_base_receiver.recv().await {
-                                Ok(_) => State::PlayingAudio,
-                                Err(err_val) => {
-                                    eprint!("Error: Communication | Playing | {}", err_val);
-                                    State::StopAudio
-                                }
-                            }
+                            gui_utils::start_playing_audio(
+                                playing_audio_to_base,
+                                base_to_playing_audio,
+                            )
+                            .await
                         },
                         Message::State,
                     )
@@ -203,8 +206,8 @@ impl Streamer {
                     println!("Stop Audio");
                     self.gui_status.are_we_play_audio = Condition::Loading;
                     let mut playing_to_base_receiver =
-                        self.communication_channel.playing_to_base.subscribe();
-                    let _ = self.communication_channel.base_to_playing.send(false);
+                        self.communication_channel.playing_audio_to_base.subscribe();
+                    let _ = self.communication_channel.base_to_playing_audio.send(false);
                     Command::perform(
                         async move {
                             match playing_to_base_receiver.recv().await {
@@ -267,40 +270,113 @@ impl Streamer {
         }
     }
     pub fn view(&self) -> Container<Message> {
+        //let color_red = Color::from_rgb8(255, 0, 0);
+        let color_green = Color::from_rgb8(0, 255, 0);
+        //let color_blue = Color::from_rgb8(0, 0, 255);
+        let color_yellow = Color::from_rgb8(255, 255, 0);
+        //let color_white = Color::from_rgb8(255, 255, 255);
+        //let color_grey = Color::from_rgb8(128, 128, 128);
+        //let color_black = Color::from_rgb8(0, 0, 0);
+        let color_pink = Color::from_rgb8(255, 150, 150);
+
+        let header = text_centered("Radioxide").size(35).line_height(LineHeight::Relative(1.0));
+
+        let connection_text = text_centered("Connection");
+        let recording_text = text_centered("Microphone");
+        let play_audio_text = text_centered("Play Audio");
+
+        let connection_status_text;
+        let recording_status_text;
+        let play_audio_status_text;
+
         let connect_button = match self.gui_status.are_we_connect {
             Condition::Active => {
+                connection_status_text = text_centered("Active").color(color_green);
                 button_with_centered_text("Disconnect").on_press(Message::Event(Event::Disconnect))
             }
-            Condition::Loading => button_with_centered_text("Processing"),
+            Condition::Loading => {
+                connection_status_text = text_centered("Loading").color(color_yellow);
+                button_with_centered_text("Processing")
+            }
             Condition::Passive => {
+                connection_status_text = text_centered("Passive").color(color_pink);
                 button_with_centered_text("Connect").on_press(Message::Event(Event::Connect))
             }
         };
 
         let record_button = match self.gui_status.are_we_record {
             Condition::Active => {
-                button_with_centered_text("Mute").on_press(Message::Event(Event::StopRecord))
+                recording_status_text = text_centered("Active").color(color_green);
+                button_with_centered_text("Start Mic").on_press(Message::Event(Event::StopRecord))
             }
-            Condition::Loading => button_with_centered_text("Processing"),
+            Condition::Loading => {
+                recording_status_text = text_centered("Loading").color(color_yellow);
+                button_with_centered_text("Processing")
+            }
             Condition::Passive => {
-                button_with_centered_text("Unmute").on_press(Message::Event(Event::Record))
+                recording_status_text = text_centered("Passive").color(color_pink);
+                button_with_centered_text("Stop Mic").on_press(Message::Event(Event::Record))
             }
         };
 
-        let play_audio_button =
-            match self.gui_status.are_we_play_audio {
-                Condition::Active => button_with_centered_text("Stop Audio")
-                    .on_press(Message::Event(Event::StopAudio)),
-                Condition::Loading => button_with_centered_text("Processing"),
-                Condition::Passive => button_with_centered_text("Play Audio")
-                    .on_press(Message::Event(Event::PlayAudio)),
-            };
+        let play_audio_button = match self.gui_status.are_we_play_audio {
+            Condition::Active => {
+                play_audio_status_text = text_centered("Active").color(color_green);
+                button_with_centered_text("Stop Audio").on_press(Message::Event(Event::StopAudio))
+            }
+            Condition::Loading => {
+                play_audio_status_text = text_centered("Loading").color(color_yellow);
+                button_with_centered_text("Processing")
+            }
+            Condition::Passive => {
+                play_audio_status_text = text_centered("Passive").color(color_pink);
+                button_with_centered_text("Play Audio").on_press(Message::Event(Event::PlayAudio))
+            }
+        };
 
-        let content = row![connect_button, record_button, play_audio_button]
-            .spacing(20)
-            .width(400)
+        let header_content = row![header]
+        .width(350)
+        .height(50);
+        let text_content = row![
+            connection_text,
+            Rule::vertical(1),
+            recording_text,
+            Rule::vertical(1),
+            play_audio_text,
+        ]
+        .spacing(5)
+        .width(350)
+        .height(35);
+
+        let status_content = row![
+            connection_status_text,
+            Rule::vertical(1),
+            recording_status_text,
+            Rule::vertical(1),
+            play_audio_status_text
+        ]
+        .spacing(5)
+        .width(350)
+        .height(35);
+        let button_content = row![connect_button, record_button, play_audio_button]
+            .spacing(5)
+            .width(350)
             .height(35);
-        container(content).height(300).center_x().center_y()
+
+        let content = column![
+            header_content,
+            Rule::horizontal(1),
+            text_content,
+            
+            button_content,
+            
+            status_content,
+            Rule::horizontal(1),
+        ]
+        .spacing(20)
+        .width(350)
+        .height(300);
+        container(content).height(300).center_x().align_y(alignment::Vertical::Top)
     }
     pub fn subscription(&self) -> Subscription<Message> {
         iced::event::listen()
@@ -321,8 +397,8 @@ impl Streamer {
         base_to_streaming: Sender<bool>,
         recording_to_base: Receiver<bool>,
         base_to_recording: Sender<bool>,
-        playing_to_base: Receiver<bool>,
-        base_to_playing: Sender<bool>,
+        playing_audio_to_base: Receiver<bool>,
+        base_to_playing_audio: Sender<bool>,
         features_in_need: Features,
         window_id: window::Id,
     ) -> Command<Message> {
@@ -335,7 +411,8 @@ impl Streamer {
                     gui_utils::stop_recording(recording_to_base, base_to_recording).await;
                 }
                 if features_in_need.play_audio {
-                    gui_utils::stop_playing_audio(playing_to_base, base_to_playing).await;
+                    gui_utils::stop_playing_audio(playing_audio_to_base, base_to_playing_audio)
+                        .await;
                 }
                 Event::CloseWindow(window_id)
             },
@@ -364,16 +441,16 @@ impl Streamer {
         let recording_to_base = self.communication_channel.recording_to_base.subscribe();
         let base_to_recording = self.communication_channel.base_to_recording.clone();
 
-        let playing_to_base = self.communication_channel.playing_to_base.subscribe();
-        let base_to_playing = self.communication_channel.base_to_playing.clone();
+        let playing_audio_to_base = self.communication_channel.playing_audio_to_base.subscribe();
+        let base_to_playing_audio = self.communication_channel.base_to_playing_audio.clone();
 
         Self::call_closer(
             streaming_to_base,
             base_to_streaming,
             recording_to_base,
             base_to_recording,
-            playing_to_base,
-            base_to_playing,
+            playing_audio_to_base,
+            base_to_playing_audio,
             features_in_need,
             window_id,
         )
