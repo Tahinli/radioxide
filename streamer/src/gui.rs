@@ -5,7 +5,7 @@ use iced::{
 use tokio::sync::broadcast::{channel, Receiver, Sender};
 
 use crate::{
-    gui_components::button_with_centered_text, gui_utils, recording, streaming, utils::get_config, Config, BUFFER_LENGTH
+    gui_components::button_with_centered_text, gui_utils, utils::get_config, Config, BUFFER_LENGTH,
 };
 
 #[derive(Debug, Clone)]
@@ -26,7 +26,7 @@ pub enum Event {
     StopAudio,
     LoadConfig(Config),
     IcedEvent(iced::Event),
-    CloseWindow(window::Id)
+    CloseWindow(window::Id),
 }
 #[derive(Debug, Clone)]
 
@@ -113,23 +113,22 @@ impl Streamer {
                 Event::Connect => {
                     println!("Connect");
                     self.gui_status.are_we_connect = Condition::Loading;
-                    let mut streaming_to_base_receiver =
-                        self.communication_channel.streaming_to_base.subscribe();
-                    tokio::spawn(streaming::connect(
-                        self.data_channel.sound_stream_sender.subscribe(),
-                        self.config.clone().unwrap(),
-                        self.communication_channel.base_to_streaming.subscribe(),
-                        self.communication_channel.streaming_to_base.clone(),
-                    ));
+
+                    let sound_stream_receiver = self.data_channel.sound_stream_sender.subscribe();
+                    let streamer_config = self.config.clone().unwrap();
+                    let streaming_to_base = self.communication_channel.streaming_to_base.clone();
+                    let base_to_streaming =
+                        self.communication_channel.base_to_streaming.subscribe();
+
                     Command::perform(
                         async move {
-                            match streaming_to_base_receiver.recv().await {
-                                Ok(_) => State::Connected,
-                                Err(err_val) => {
-                                    eprintln!("Error: Communication | {}", err_val);
-                                    State::Disconnected
-                                }
-                            }
+                            gui_utils::connect(
+                                sound_stream_receiver,
+                                streamer_config,
+                                streaming_to_base,
+                                base_to_streaming,
+                            )
+                            .await
                         },
                         Message::State,
                     )
@@ -137,31 +136,33 @@ impl Streamer {
                 Event::Disconnect => {
                     println!("Disconnect");
                     self.gui_status.are_we_connect = Condition::Loading;
-                    let streaming_to_base = self.communication_channel.streaming_to_base.subscribe();
+
+                    let streaming_to_base =
+                        self.communication_channel.streaming_to_base.subscribe();
                     let base_to_streaming = self.communication_channel.base_to_streaming.clone();
-                    Command::perform(async move {
-                        gui_utils::disconnect(streaming_to_base, base_to_streaming).await
-                    }, Message::State)
+
+                    Command::perform(
+                        async move { gui_utils::disconnect(streaming_to_base, base_to_streaming).await },
+                        Message::State,
+                    )
                 }
                 Event::Record => {
                     println!("Record");
                     self.gui_status.are_we_record = Condition::Loading;
-                    let mut recording_to_base_receiver =
-                        self.communication_channel.recording_to_base.subscribe();
-                    tokio::spawn(recording::record(
-                        self.data_channel.sound_stream_sender.clone(),
-                        self.communication_channel.base_to_recording.subscribe(),
-                        self.communication_channel.recording_to_base.clone(),
-                    ));
+
+                    let sound_stream_sender = self.data_channel.sound_stream_sender.clone();
+                    let recording_to_base = self.communication_channel.recording_to_base.clone();
+                    let base_to_recording =
+                        self.communication_channel.base_to_recording.subscribe();
+
                     Command::perform(
                         async move {
-                            match recording_to_base_receiver.recv().await {
-                                Ok(_) => State::Recording,
-                                Err(err_val) => {
-                                    eprintln!("Error: Communication | Streaming | {}", err_val);
-                                    State::StopRecording
-                                }
-                            }
+                            gui_utils::record(
+                                sound_stream_sender,
+                                recording_to_base,
+                                base_to_recording,
+                            )
+                            .await
                         },
                         Message::State,
                     )
@@ -169,11 +170,15 @@ impl Streamer {
                 Event::StopRecord => {
                     println!("Stop Record");
                     self.gui_status.are_we_record = Condition::Loading;
-                    let recording_to_base = self.communication_channel.recording_to_base.subscribe();
+                    let recording_to_base =
+                        self.communication_channel.recording_to_base.subscribe();
                     let base_to_recording = self.communication_channel.base_to_recording.clone();
-                    Command::perform(async move {
-                        gui_utils::stop_recording(recording_to_base, base_to_recording).await
-                    }, Message::State)
+                    Command::perform(
+                        async move {
+                            gui_utils::stop_recording(recording_to_base, base_to_recording).await
+                        },
+                        Message::State,
+                    )
                 }
                 Event::PlayAudio => {
                     println!("Play Audio");
@@ -230,9 +235,7 @@ impl Streamer {
                     iced::Event::Touch(_) => Command::none(),
                     iced::Event::PlatformSpecific(_) => Command::none(),
                 },
-                Event::CloseWindow(id) => {
-                    window::close(id)
-                },
+                Event::CloseWindow(id) => window::close(id),
             },
             Message::State(state) => match state {
                 State::None => Command::none(),
@@ -316,28 +319,31 @@ impl Streamer {
     fn call_closer(
         streaming_to_base: Receiver<bool>,
         base_to_streaming: Sender<bool>,
-        recording_to_base: Receiver<bool>, 
+        recording_to_base: Receiver<bool>,
         base_to_recording: Sender<bool>,
         playing_to_base: Receiver<bool>,
         base_to_playing: Sender<bool>,
         features_in_need: Features,
         window_id: window::Id,
-    )-> Command<Message> {
-        Command::perform(async move {
-            if features_in_need.stream {
-                gui_utils::disconnect(streaming_to_base, base_to_streaming).await;
-            }
-            if features_in_need.record {
-                gui_utils::stop_recording(recording_to_base, base_to_recording).await;   
-            }
-            if features_in_need.play_audio {
-                gui_utils::stop_playing_audio(playing_to_base, base_to_playing).await;
-            }
-            Event::CloseWindow(window_id)
-        }, Message::Event)
+    ) -> Command<Message> {
+        Command::perform(
+            async move {
+                if features_in_need.stream {
+                    gui_utils::disconnect(streaming_to_base, base_to_streaming).await;
+                }
+                if features_in_need.record {
+                    gui_utils::stop_recording(recording_to_base, base_to_recording).await;
+                }
+                if features_in_need.play_audio {
+                    gui_utils::stop_playing_audio(playing_to_base, base_to_playing).await;
+                }
+                Event::CloseWindow(window_id)
+            },
+            Message::Event,
+        )
     }
     fn exit(&self, window_id: window::Id) -> Command<Message> {
-        let mut features_in_need = Features{
+        let mut features_in_need = Features {
             stream: false,
             record: false,
             play_audio: false,
@@ -361,6 +367,15 @@ impl Streamer {
         let playing_to_base = self.communication_channel.playing_to_base.subscribe();
         let base_to_playing = self.communication_channel.base_to_playing.clone();
 
-        Self::call_closer(streaming_to_base, base_to_streaming, recording_to_base, base_to_recording, playing_to_base, base_to_playing, features_in_need, window_id)
+        Self::call_closer(
+            streaming_to_base,
+            base_to_streaming,
+            recording_to_base,
+            base_to_recording,
+            playing_to_base,
+            base_to_playing,
+            features_in_need,
+            window_id,
+        )
     }
 }

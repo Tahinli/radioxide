@@ -1,13 +1,14 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use tokio::{sync::broadcast::{Receiver, Sender}, task};
+use tokio::{
+    sync::broadcast::{Receiver, Sender},
+    task,
+};
 
 pub async fn record(
     sound_stream_sender: Sender<f32>,
-    mut base_to_recording: Receiver<bool>,
     recording_to_base: Sender<bool>,
+    mut base_to_recording: Receiver<bool>,
 ) {
-    let _ = recording_to_base.send(true);
-
     let host = cpal::default_host();
     let input_device = host.default_input_device().unwrap();
 
@@ -28,12 +29,13 @@ pub async fn record(
         .unwrap();
     input_stream.play().unwrap();
     println!("Recording Started");
+
     tokio::spawn(let_the_base_know(recording_to_base.clone()));
 
     task::block_in_place(|| {
         let _ = base_to_recording.blocking_recv();
     });
-    
+
     input_stream.pause().unwrap();
     tokio::spawn(let_the_base_know(recording_to_base.clone()));
     println!("Recording Stopped");
