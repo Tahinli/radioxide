@@ -1,6 +1,7 @@
 pub mod gui;
 pub mod gui_components;
 pub mod gui_utils;
+pub mod playing;
 pub mod recording;
 pub mod streaming;
 pub mod utils;

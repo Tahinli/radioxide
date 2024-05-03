@@ -73,7 +73,7 @@ pub async fn sound_stream(
                     unhealty_packet
                 }
             };
-
+            log::info!("{}", uncompressed_data.len());
             let data = String::from_utf8(uncompressed_data).unwrap();
             let mut datum_parsed: Vec<char> = vec![];
             let mut data_parsed: Vec<String> = vec![];
