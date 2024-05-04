@@ -100,19 +100,18 @@ pub async fn start_playing(
 }
 
 pub async fn stop_playing(
-    decoded_to_playing_sender: Sender<f32>,
     mut playing_to_base_receiver: Receiver<bool>,
     base_to_playing_sender: Sender<bool>,
 ) -> State {
-    let thread_solver_task = tokio::spawn(thread_solver(decoded_to_playing_sender));
+    //let thread_solver_task = tokio::spawn(thread_solver(decoded_to_playing_sender));
     let _ = base_to_playing_sender.send(false);
     match playing_to_base_receiver.recv().await {
         Ok(_) => {
-            thread_solver_task.abort();
+            //thread_solver_task.abort();
             State::StopAudio
         }
         Err(err_val) => {
-            thread_solver_task.abort();
+            //thread_solver_task.abort();
             eprintln!("Error: Communication | {}", err_val);
             State::PlayingAudio
         }
@@ -128,17 +127,6 @@ pub async fn is_playing_finished(
     while decoded_to_playing_sender.len() > 0 {
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
-    stop_playing(
-        decoded_to_playing_sender,
-        playing_to_base_receiver,
-        base_to_playing_sender,
-    )
-    .await;
+    stop_playing(playing_to_base_receiver, base_to_playing_sender).await;
     State::StopAudio
-}
-
-async fn thread_solver(decoded_to_playing_sender: Sender<f32>) {
-    loop {
-        let _ = decoded_to_playing_sender.send(0.0);
-    }
 }

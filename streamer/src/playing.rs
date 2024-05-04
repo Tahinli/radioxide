@@ -46,14 +46,16 @@ pub async fn play(
 
     let output_data_fn = move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
         for sample in data {
-            let single = match decoded_to_playing_receiver.blocking_recv() {
-                Ok(single) => single,
-                Err(_) => 0.0,
-            };
-            if audio_stream_sender.receiver_count() > 0 {
-                let _ = audio_stream_sender.send(single);
+            if decoded_to_playing_receiver.len() > 0 {
+                let single = match decoded_to_playing_receiver.blocking_recv() {
+                    Ok(single) => single,
+                    Err(_) => 0.0,
+                };
+                if audio_stream_sender.receiver_count() > 0 {
+                    let _ = audio_stream_sender.send(single);
+                }
+                *sample = single;
             }
-            *sample = single;
         }
     };
 

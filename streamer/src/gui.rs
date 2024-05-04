@@ -239,12 +239,12 @@ impl Streamer {
                                 .metadata()
                                 .unwrap()
                                 .len() as usize
-                                * 4,
+                                * 1,
                         )
                         .0,
                     );
 
-                    ///////TEST İÇİN YANLIŞ VERDİM UNUTMA
+                    ///////Don't Forget it's for testing
                     let audio_stream_sender = self.data_channel.microphone_stream_sender.clone();
                     let playing_to_base_sender =
                         self.communication_channel.playing_to_base_sender.clone();
@@ -298,8 +298,6 @@ impl Streamer {
                     println!("Stop Audio");
                     self.gui_status.are_we_play_audio = Condition::Loading;
 
-                    let decoded_to_playing_sender =
-                        self.audio_file.decoded_to_playing_sender.clone().unwrap();
                     let playing_to_base_receiver = self
                         .communication_channel
                         .playing_to_base_sender
@@ -310,7 +308,6 @@ impl Streamer {
                     Command::perform(
                         async move {
                             gui_utils::stop_playing(
-                                decoded_to_playing_sender,
                                 playing_to_base_receiver,
                                 base_to_playing_sender,
                             )
@@ -496,7 +493,6 @@ impl Streamer {
         base_to_streaming_sender: Sender<bool>,
         recording_to_base_receiver: Receiver<bool>,
         base_to_recording_sender: Sender<bool>,
-        decoded_to_playing_sender: Sender<f32>,
         playing_to_base_receiver: Receiver<bool>,
         base_to_playing_sender: Sender<bool>,
         features_in_need: Features,
@@ -513,12 +509,7 @@ impl Streamer {
                         .await;
                 }
                 if features_in_need.play_audio {
-                    gui_utils::stop_playing(
-                        decoded_to_playing_sender,
-                        playing_to_base_receiver,
-                        base_to_playing_sender,
-                    )
-                    .await;
+                    gui_utils::stop_playing(playing_to_base_receiver, base_to_playing_sender).await;
                 }
                 Event::CloseWindow(window_id)
             },
@@ -553,7 +544,6 @@ impl Streamer {
             .subscribe();
         let base_to_recording_sender = self.communication_channel.base_to_recording_sender.clone();
 
-        let decoded_to_playing_sender = self.audio_file.decoded_to_playing_sender.clone().unwrap();
         let playing_to_base_receiver = self
             .communication_channel
             .playing_to_base_sender
@@ -565,7 +555,6 @@ impl Streamer {
             base_to_streaming_sender,
             recording_to_base_receiver,
             base_to_recording_sender,
-            decoded_to_playing_sender,
             playing_to_base_receiver,
             base_to_playing_sender,
             features_in_need,
