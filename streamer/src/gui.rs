@@ -1,3 +1,5 @@
+use std::fs::File;
+
 use iced::{
     alignment,
     widget::{column, container, row, text::LineHeight, Container, Rule},
@@ -17,6 +19,12 @@ struct Features {
     stream: bool,
     record: bool,
     play_audio: bool,
+}
+
+#[derive(Debug)]
+struct AudioFile {
+    file: Option<File>,
+    decoded_to_playing_sender: Option<Sender<f32>>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +89,7 @@ pub struct Streamer {
     config: Option<Config>,
     data_channel: DataChannel,
     communication_channel: CommunicationChannel,
+    audio_file: AudioFile,
     gui_status: GUIStatus,
 }
 impl Default for Streamer {
@@ -104,6 +113,10 @@ impl Streamer {
                 recording_to_base_sender: channel(1).0,
                 base_to_playing_sender: channel(1).0,
                 playing_to_base_sender: channel(1).0,
+            },
+            audio_file: AudioFile {
+                file: None,
+                decoded_to_playing_sender: None,
             },
             gui_status: GUIStatus {
                 are_we_connect: Condition::Passive,
@@ -213,6 +226,24 @@ impl Streamer {
                 Event::PlayAudio => {
                     println!("Play Audio");
                     self.gui_status.are_we_play_audio = Condition::Loading;
+
+                    let file = File::open("music.mp3").unwrap();
+                    self.audio_file.file = Some(file);
+
+                    self.audio_file.decoded_to_playing_sender = Some(
+                        channel(
+                            self.audio_file
+                                .file
+                                .as_ref()
+                                .unwrap()
+                                .metadata()
+                                .unwrap()
+                                .len() as usize
+                                * 4,
+                        )
+                        .0,
+                    );
+
                     ///////TEST İÇİN YANLIŞ VERDİM UNUTMA
                     let audio_stream_sender = self.data_channel.microphone_stream_sender.clone();
                     let playing_to_base_sender =
@@ -222,30 +253,64 @@ impl Streamer {
                         .base_to_playing_sender
                         .subscribe();
 
-                    Command::perform(
+                    let playing_to_base_receiver = self
+                        .communication_channel
+                        .playing_to_base_sender
+                        .subscribe();
+
+                    let base_to_playing_sender =
+                        self.communication_channel.base_to_playing_sender.clone();
+
+                    let file = self.audio_file.file.as_ref().unwrap().try_clone().unwrap();
+                    let decoded_to_playing_sender_for_playing =
+                        self.audio_file.decoded_to_playing_sender.clone().unwrap();
+
+                    let decoded_to_playing_sender_for_is_finished =
+                        self.audio_file.decoded_to_playing_sender.clone().unwrap();
+                    let playing_command = Command::perform(
                         async move {
                             gui_utils::start_playing(
                                 audio_stream_sender,
+                                decoded_to_playing_sender_for_playing,
+                                file,
                                 playing_to_base_sender,
                                 base_to_playing_receiver,
                             )
                             .await
                         },
                         Message::State,
-                    )
+                    );
+                    let is_finished_command = Command::perform(
+                        async move {
+                            gui_utils::is_playing_finished(
+                                playing_to_base_receiver,
+                                base_to_playing_sender,
+                                decoded_to_playing_sender_for_is_finished,
+                            )
+                            .await
+                        },
+                        Message::State,
+                    );
+                    let commands = vec![playing_command, is_finished_command];
+                    Command::batch(commands)
                 }
                 Event::StopAudio => {
                     println!("Stop Audio");
                     self.gui_status.are_we_play_audio = Condition::Loading;
+
+                    let decoded_to_playing_sender =
+                        self.audio_file.decoded_to_playing_sender.clone().unwrap();
                     let playing_to_base_receiver = self
                         .communication_channel
                         .playing_to_base_sender
                         .subscribe();
                     let base_to_playing_sender =
                         self.communication_channel.base_to_playing_sender.clone();
+
                     Command::perform(
                         async move {
                             gui_utils::stop_playing(
+                                decoded_to_playing_sender,
                                 playing_to_base_receiver,
                                 base_to_playing_sender,
                             )
@@ -431,6 +496,7 @@ impl Streamer {
         base_to_streaming_sender: Sender<bool>,
         recording_to_base_receiver: Receiver<bool>,
         base_to_recording_sender: Sender<bool>,
+        decoded_to_playing_sender: Sender<f32>,
         playing_to_base_receiver: Receiver<bool>,
         base_to_playing_sender: Sender<bool>,
         features_in_need: Features,
@@ -447,7 +513,12 @@ impl Streamer {
                         .await;
                 }
                 if features_in_need.play_audio {
-                    gui_utils::stop_playing(playing_to_base_receiver, base_to_playing_sender).await;
+                    gui_utils::stop_playing(
+                        decoded_to_playing_sender,
+                        playing_to_base_receiver,
+                        base_to_playing_sender,
+                    )
+                    .await;
                 }
                 Event::CloseWindow(window_id)
             },
@@ -482,6 +553,7 @@ impl Streamer {
             .subscribe();
         let base_to_recording_sender = self.communication_channel.base_to_recording_sender.clone();
 
+        let decoded_to_playing_sender = self.audio_file.decoded_to_playing_sender.clone().unwrap();
         let playing_to_base_receiver = self
             .communication_channel
             .playing_to_base_sender
@@ -493,6 +565,7 @@ impl Streamer {
             base_to_streaming_sender,
             recording_to_base_receiver,
             base_to_recording_sender,
+            decoded_to_playing_sender,
             playing_to_base_receiver,
             base_to_playing_sender,
             features_in_need,
