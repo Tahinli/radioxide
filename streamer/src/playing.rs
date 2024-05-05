@@ -17,12 +17,14 @@ use tokio::{
     task,
 };
 
+use crate::gui::Player;
+
 pub async fn play(
     audio_stream_sender: Sender<f32>,
     file: File,
     decoded_to_playing_sender: Sender<f32>,
-    playing_to_base_sender: Sender<bool>,
-    mut base_to_playing_receiver: Receiver<bool>,
+    playing_to_base_sender: Sender<Player>,
+    mut base_to_playing_receiver: Receiver<Player>,
 ) {
     let host = cpal::default_host();
     let output_device = host.default_output_device().unwrap();
@@ -64,20 +66,45 @@ pub async fn play(
         .unwrap();
 
     output_stream.play().unwrap();
-    tokio::spawn(let_the_base_know(playing_to_base_sender.clone()));
+    tokio::spawn(let_the_base_know(
+        playing_to_base_sender.clone(),
+        Player::Play,
+    ));
 
-    task::block_in_place(|| {
-        let _ = base_to_playing_receiver.blocking_recv();
+    task::block_in_place(|| loop {
+        match base_to_playing_receiver.blocking_recv() {
+            Ok(state) => match state {
+                Player::Play => {
+                    output_stream.play().unwrap();
+                    tokio::spawn(let_the_base_know(
+                        playing_to_base_sender.clone(),
+                        Player::Play,
+                    ));
+                }
+                Player::Pause => match output_stream.pause() {
+                    Ok(_) => {
+                        tokio::spawn(let_the_base_know(
+                            playing_to_base_sender.clone(),
+                            Player::Pause,
+                        ));
+                    }
+                    //todo when pause error, do software level stop
+                    Err(_) => todo!(),
+                },
+                Player::Stop => break,
+            },
+            Err(_) => break,
+        }
     });
     drop(output_stream);
-    tokio::spawn(let_the_base_know(playing_to_base_sender));
+    tokio::spawn(let_the_base_know(playing_to_base_sender, Player::Stop));
 }
 
 fn err_fn(err: cpal::StreamError) {
     eprintln!("Something Happened: {}", err);
 }
-async fn let_the_base_know(playing_to_base_sender: Sender<bool>) {
-    let _ = playing_to_base_sender.send(true);
+async fn let_the_base_know(playing_to_base_sender: Sender<Player>, action: Player) {
+    let _ = playing_to_base_sender.send(action);
 }
 fn decode_audio(output_device_sample_rate: u32, file: File) -> (Vec<f64>, Vec<f64>) {
     let mut audio_decoded_left = vec![];
