@@ -1,15 +1,18 @@
-use std::fs::File;
+use std::{fs::File, sync::Arc};
 
 use iced::{
     alignment,
-    widget::{column, container, row, text::LineHeight, Container, Rule},
+    widget::{column, container, row, slider, text::LineHeight, Container, Rule},
     window, Color, Command, Subscription,
 };
-use tokio::sync::broadcast::{channel, Receiver, Sender};
+use tokio::sync::{
+    broadcast::{channel, Receiver, Sender},
+    Mutex,
+};
 
 use crate::{
     gui_components::{button_with_centered_text, text_centered},
-    gui_utils,
+    gui_utils::{self, change_audio_volume, change_microphone_volume},
     utils::get_config,
     Config, BUFFER_LENGTH,
 };
@@ -45,6 +48,8 @@ pub enum Event {
     StopAudio,
     PauseAudio,
     ContinueAudio,
+    ChangeMicrophoneVolume(f32),
+    ChangeAudioVolume(f32),
     LoadConfig(Config),
     IcedEvent(iced::Event),
     CloseWindow(window::Id),
@@ -61,6 +66,8 @@ pub enum State {
     StopAudio,
     PausedAudio,
     ContinuedAudio,
+    MicrophoneVolumeChanged,
+    AudioVolumeChanged,
 }
 
 #[derive(Debug, Clone)]
@@ -90,11 +97,18 @@ enum Condition {
 }
 
 #[derive(Debug)]
+struct ChangeableValue {
+    value: Arc<Mutex<f32>>,
+}
+
+#[derive(Debug)]
 struct GUIStatus {
     are_we_connect: Condition,
     are_we_record: Condition,
     are_we_play_audio: Condition,
     are_we_paused_audio: Condition,
+    microphone_volume: ChangeableValue,
+    audio_volume: ChangeableValue,
 }
 #[derive(Debug)]
 pub struct Streamer {
@@ -135,6 +149,12 @@ impl Streamer {
                 are_we_record: Condition::Passive,
                 are_we_play_audio: Condition::Passive,
                 are_we_paused_audio: Condition::Passive,
+                microphone_volume: ChangeableValue {
+                    value: Arc::new(1.0.into()),
+                },
+                audio_volume: ChangeableValue {
+                    value: Arc::new(1.0.into()),
+                },
             },
         }
     }
@@ -156,7 +176,8 @@ impl Streamer {
                         .communication_channel
                         .base_to_streaming_sender
                         .subscribe();
-
+                    let microphone_stream_volume = self.gui_status.microphone_volume.value.clone();
+                    let audio_stream_volume = self.gui_status.audio_volume.value.clone();
                     Command::perform(
                         async move {
                             gui_utils::connect(
@@ -165,6 +186,8 @@ impl Streamer {
                                 streamer_config,
                                 streaming_to_base_sender,
                                 base_to_streaming_receiver,
+                                microphone_stream_volume,
+                                audio_stream_volume,
                             )
                             .await
                         },
@@ -286,6 +309,9 @@ impl Streamer {
 
                     let decoded_to_playing_sender_for_is_finished =
                         self.audio_file.decoded_to_playing_sender.clone().unwrap();
+
+                    let audio_volume = self.gui_status.audio_volume.value.clone();
+
                     let playing_command = Command::perform(
                         async move {
                             gui_utils::start_playing(
@@ -294,6 +320,7 @@ impl Streamer {
                                 file,
                                 playing_to_base_sender,
                                 base_to_playing_receiver,
+                                audio_volume,
                             )
                             .await
                         },
@@ -380,6 +407,22 @@ impl Streamer {
                         Message::State,
                     )
                 }
+                Event::ChangeMicrophoneVolume(value) => {
+                    *self.gui_status.microphone_volume.value.blocking_lock() = value;
+                    let microphone_volume = self.gui_status.microphone_volume.value.clone();
+                    Command::perform(
+                        async move { change_microphone_volume(value, microphone_volume).await },
+                        Message::State,
+                    )
+                }
+                Event::ChangeAudioVolume(value) => {
+                    *self.gui_status.audio_volume.value.blocking_lock() = value;
+                    let audio_volume = self.gui_status.audio_volume.value.clone();
+                    Command::perform(
+                        async move { change_audio_volume(value, audio_volume).await },
+                        Message::State,
+                    )
+                }
                 Event::LoadConfig(config) => {
                     self.config = Some(config);
                     Command::none()
@@ -434,6 +477,8 @@ impl Streamer {
                     self.gui_status.are_we_paused_audio = Condition::Passive;
                     Command::none()
                 }
+                State::MicrophoneVolumeChanged => Command::none(),
+                State::AudioVolumeChanged => Command::none(),
             },
         }
     }
@@ -528,6 +573,20 @@ impl Streamer {
             button_with_centered_text("No Purpose")
         };
 
+        let microphone_volume_slider = slider(
+            0.0..=1.0,
+            *self.gui_status.microphone_volume.value.blocking_lock(),
+            |value| Message::Event(Event::ChangeMicrophoneVolume(value)),
+        )
+        .step(0.01);
+
+        let audio_volume_slider = slider(
+            0.0..=1.0,
+            *self.gui_status.audio_volume.value.blocking_lock(),
+            |value| Message::Event(Event::ChangeAudioVolume(value)),
+        )
+        .step(0.01);
+
         let header_content = row![header].width(350).height(50);
         let text_content = row![
             connection_text,
@@ -558,12 +617,15 @@ impl Streamer {
             connect_button,
             record_button,
             play_audio_button,
-            pause_audio_button
+            pause_audio_button,
         ]
         .spacing(5)
         .width(350)
         .height(35);
-
+        let volume_content = row![microphone_volume_slider, audio_volume_slider,]
+            .spacing(5)
+            .width(350)
+            .height(35);
         let content = column![
             header_content,
             Rule::horizontal(1),
@@ -571,6 +633,7 @@ impl Streamer {
             button_content,
             status_content,
             Rule::horizontal(1),
+            volume_content,
         ]
         .spacing(20)
         .width(350)
