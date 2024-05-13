@@ -5,7 +5,7 @@ use tokio::{
 };
 
 pub async fn record(
-    sound_stream_sender: Sender<f32>,
+    microphone_stream_sender: Sender<f32>,
     recording_to_base: Sender<bool>,
     mut base_to_recording: Receiver<bool>,
 ) {
@@ -13,11 +13,10 @@ pub async fn record(
     let input_device = host.default_input_device().unwrap();
 
     let config: cpal::StreamConfig = input_device.default_input_config().unwrap().into();
-
     let input_data_fn = move |data: &[f32], _: &cpal::InputCallbackInfo| {
         for &sample in data {
-            if sound_stream_sender.receiver_count() > 0 {
-                match sound_stream_sender.send(sample) {
+            if microphone_stream_sender.receiver_count() > 0 {
+                match microphone_stream_sender.send(sample) {
                     Ok(_) => {}
                     Err(_) => {}
                 }

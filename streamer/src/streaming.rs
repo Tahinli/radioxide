@@ -1,4 +1,4 @@
-use std::{io::Write, sync::Arc, time::Duration};
+use std::{cmp::min, io::Write, sync::Arc, time::Duration};
 
 use brotli::CompressorWriter;
 use futures_util::SinkExt;
@@ -94,10 +94,21 @@ async fn mixer(
     flow_sender: Sender<f32>,
     latency: u16,
 ) {
+    microphone_stream_receiver = microphone_stream_receiver.resubscribe();
+    audio_stream_receiver = audio_stream_receiver.resubscribe();
     loop {
         let mut microphone_stream = vec![];
         let mut audio_stream = vec![];
+
         let mut microphone_stream_iteration = microphone_stream_receiver.len();
+        let mut audio_stream_iteration = audio_stream_receiver.len();
+
+        if microphone_stream_iteration > 0 && audio_stream_iteration > 0 {
+            let sync_iteration = min(microphone_stream_iteration, audio_stream_iteration);
+            microphone_stream_iteration = sync_iteration;
+            audio_stream_iteration = sync_iteration;
+        }
+
         while microphone_stream_iteration > 0 {
             microphone_stream_iteration -= 1;
             match microphone_stream_receiver.recv().await {
@@ -113,7 +124,6 @@ async fn mixer(
             }
         }
 
-        let mut audio_stream_iteration = audio_stream_receiver.len();
         while audio_stream_iteration > 0 {
             audio_stream_iteration -= 1;
             match audio_stream_receiver.recv().await {
@@ -127,16 +137,27 @@ async fn mixer(
         }
 
         let mut flow = vec![];
+        let microphone_volume = *microphone_stream_volume.lock().await;
+        let audio_volume = *audio_stream_volume.lock().await;
 
         for element in microphone_stream {
-            flow.push(element * (*microphone_stream_volume.lock().await));
+            if element < 0.01 || element > -0.01 {
+                flow.push(element * microphone_volume);
+            }
         }
+
         for (i, element) in audio_stream.iter().enumerate() {
-            let audio_volumized = element * (*audio_stream_volume.lock().await);
-            if flow.len() > i && flow.len() != 0 {
+            let audio_volumized = element * audio_volume;
+            if flow.len() > i {
                 flow[i] = flow[i] + audio_volumized;
             } else {
                 flow.push(audio_volumized);
+            }
+        }
+
+        for i in 0..flow.len() {
+            if flow[i] > 1.0 {
+                flow[i] = 0.5 * (flow[i] / flow[i].trunc() * 10.0);
             }
         }
         for element in flow {
