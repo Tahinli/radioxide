@@ -1,4 +1,4 @@
-use std::{fs::File, sync::Arc, time::Duration};
+use std::{fs::File, path::Path, sync::Arc, time::Duration};
 
 use tokio::sync::{
     broadcast::{Receiver, Sender},
@@ -315,4 +315,30 @@ pub async fn change_audio_volume(
 ) -> State {
     *audio_stream_volume.lock().await = desired_value;
     State::AudioVolumeChanged
+}
+
+pub async fn list_files(folder_path: &Path) -> Option<Vec<String>> {
+    let mut file_names: Vec<String> = vec![];
+    match std::fs::read_dir(folder_path) {
+        Ok(entities) => {
+            for entity in entities {
+                match entity {
+                    Ok(entity) => {
+                        let path = entity.path();
+                        if path.is_file() {
+                            file_names.push(path.file_name().unwrap().to_str().unwrap().to_string())
+                        }
+                    }
+                    Err(err_val) => {
+                        eprintln!("Error: Entity | {}", err_val);
+                    }
+                }
+            }
+            Some(file_names)
+        }
+        Err(err_val) => {
+            eprintln!("Error: Read Directory | {}", err_val);
+            None
+        }
+    }
 }

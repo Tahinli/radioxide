@@ -38,7 +38,13 @@ pub async fn play(
     let output_device_sample_rate = output_device_config.sample_rate.0;
 
     let (mut audio_resampled_left, mut audio_resampled_right) =
-        decode_audio(output_device_sample_rate, file);
+        match decode_audio(output_device_sample_rate, file) {
+            Some((left, right)) => (left, right),
+            None => {
+                let_the_base_know(playing_to_base_sender, Player::Stop).await;
+                return;
+            }
+        };
 
     let mut decoded_to_playing_receiver = decoded_to_playing_sender.subscribe();
     for _ in 0..audio_resampled_left.clone().len() {
@@ -110,7 +116,7 @@ fn err_fn(err: cpal::StreamError) {
 async fn let_the_base_know(playing_to_base_sender: Sender<Player>, action: Player) {
     let _ = playing_to_base_sender.send(action);
 }
-fn decode_audio(output_device_sample_rate: u32, file: File) -> (Vec<f64>, Vec<f64>) {
+fn decode_audio(output_device_sample_rate: u32, file: File) -> Option<(Vec<f64>, Vec<f64>)> {
     let mut audio_decoded_left = vec![];
     let mut audio_decoded_right = vec![];
     let media_source_stream = MediaSourceStream::new(Box::new(file), Default::default());
@@ -120,16 +126,19 @@ fn decode_audio(output_device_sample_rate: u32, file: File) -> (Vec<f64>, Vec<f6
     let metadata_options = MetadataOptions::default();
     let format_options = FormatOptions::default();
 
-    let probed = symphonia::default::get_probe()
-        .format(
-            &hint,
-            media_source_stream,
-            &format_options,
-            &metadata_options,
-        )
-        .unwrap();
+    let mut probed = symphonia::default::get_probe().format(
+        &hint,
+        media_source_stream,
+        &format_options,
+        &metadata_options,
+    );
 
-    let mut format = probed.format;
+    match probed {
+        Ok(probed_safe) => probed = Ok(probed_safe),
+        Err(_) => return None,
+    }
+
+    let mut format = probed.unwrap().format;
 
     let track = format
         .tracks()
@@ -216,5 +225,5 @@ fn decode_audio(output_device_sample_rate: u32, file: File) -> (Vec<f64>, Vec<f6
     audio_resampled_left.reverse();
     audio_resampled_right.reverse();
 
-    (audio_resampled_left, audio_resampled_right)
+    Some((audio_resampled_left, audio_resampled_right))
 }

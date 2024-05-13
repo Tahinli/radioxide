@@ -6,9 +6,9 @@ use iced::{
 
 use crate::gui::Message;
 
-pub fn button_with_centered_text(txt: &'static str) -> Button<'static, Message> {
+pub fn button_with_centered_text<T: Into<String>>(txt: T) -> Button<'static, Message> {
     button(
-        text(txt)
+        text(txt.into())
             .width(Length::Fill)
             .horizontal_alignment(alignment::Horizontal::Center),
     )
@@ -16,8 +16,8 @@ pub fn button_with_centered_text(txt: &'static str) -> Button<'static, Message> 
     .width(Length::Fill)
 }
 
-pub fn text_centered(txt: &'static str) -> Text {
-    text(txt)
+pub fn text_centered<T: Into<String>>(txt: T) -> Text<'static> {
+    text(txt.into())
         .width(Length::Fill)
         .height(Length::Fill)
         .horizontal_alignment(alignment::Horizontal::Center)
