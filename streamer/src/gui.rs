@@ -1,4 +1,4 @@
-use std::{fs::File, path::Path, sync::Arc};
+use std::{cmp::max, fs::File, path::Path, sync::Arc};
 
 use iced::{
     alignment,
@@ -284,10 +284,12 @@ impl Streamer {
                         Err(err_val) => {
                             eprintln!("Error: Open File | {}", err_val);
                             self.audio_miscellaneous.file = None;
+                            self.gui_status.are_we_play_audio = Condition::Passive;
+                            return Command::none();
                         }
                     }
                     self.audio_miscellaneous.decoded_to_playing_sender = Some(
-                        channel(
+                        channel(max(
                             self.audio_miscellaneous
                                 .file
                                 .as_ref()
@@ -296,7 +298,8 @@ impl Streamer {
                                 .unwrap()
                                 .len() as usize
                                 * 4,
-                        )
+                            1,
+                        ))
                         .0,
                     );
 
