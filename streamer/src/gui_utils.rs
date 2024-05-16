@@ -16,6 +16,7 @@ pub async fn connect(
     streamer_config: Config,
     streaming_to_base_sender: Sender<bool>,
     base_to_streaming_receiver: Receiver<bool>,
+    streaming_to_base_sender_is_finished: Sender<bool>,
     microphone_stream_volume: Arc<Mutex<f32>>,
     audio_stream_volume: Arc<Mutex<f32>>,
 ) -> State {
@@ -26,6 +27,7 @@ pub async fn connect(
         streamer_config,
         base_to_streaming_receiver,
         streaming_to_base_sender.clone(),
+        streaming_to_base_sender_is_finished,
         microphone_stream_volume,
         audio_stream_volume,
     ));
@@ -68,6 +70,46 @@ pub async fn disconnect(
             );
             State::Connected
         }
+    }
+}
+
+pub async fn is_streaming_finished(
+    mut streaming_to_base_receiver_is_streaming_finished: Receiver<bool>,
+    mut streaming_to_base_receiver_is_streaming_stopped: Receiver<bool>,
+) -> State {
+    tokio::select! {
+        is_streaming_finished = async move {
+            match streaming_to_base_receiver_is_streaming_finished.recv().await {
+                Ok(_) => State::Disconnected,
+                Err(err_val) => {
+                    eprintln!(
+                        "Error: Communication | Streaming to Base | Recv | Is Finished | {}",
+                        err_val
+                    );
+                    State::Connected
+                },
+            }
+        } => is_streaming_finished,
+        is_streaming_stopped = async move {
+            match streaming_to_base_receiver_is_streaming_stopped.recv().await {
+                Ok(_) => {
+                    while let Err(err_val) = streaming_to_base_receiver_is_streaming_stopped.recv().await {
+                        eprintln!(
+                            "Error: Communication | Streaming to Base | Recv | Is Stopped | {}",
+                            err_val
+                        );
+                    }
+                    State::Disconnected
+                },
+                Err(err_val) => {
+                    eprintln!(
+                        "Error: Communication | Streaming to Base | Recv | Is Stopped Never Started | {}",
+                        err_val
+                    );
+                    State::Disconnected
+                },
+            }
+        } =>is_streaming_stopped,
     }
 }
 

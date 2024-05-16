@@ -91,6 +91,7 @@ struct DataChannel {
 struct CommunicationChannel {
     base_to_streaming_sender: Sender<bool>,
     streaming_to_base_sender: Sender<bool>,
+    streaming_to_base_is_finished: Sender<bool>,
     base_to_recording_sender: Sender<bool>,
     recording_to_base_sender: Sender<bool>,
     base_to_playing_sender: Sender<Player>,
@@ -142,6 +143,7 @@ impl Streamer {
             communication_channel: CommunicationChannel {
                 base_to_streaming_sender: channel(1).0,
                 streaming_to_base_sender: channel(1).0,
+                streaming_to_base_is_finished: channel(1).0,
                 base_to_recording_sender: channel(1).0,
                 recording_to_base_sender: channel(1).0,
                 base_to_playing_sender: channel(1).0,
@@ -187,7 +189,21 @@ impl Streamer {
                         .subscribe();
                     let microphone_stream_volume = self.gui_status.microphone_volume.value.clone();
                     let audio_stream_volume = self.gui_status.audio_volume.value.clone();
-                    Command::perform(
+                    let streaming_to_base_sender_is_finished = self
+                        .communication_channel
+                        .streaming_to_base_is_finished
+                        .clone();
+
+                    let streaming_to_base_receiver_is_streaming_stopped = self
+                        .communication_channel
+                        .recording_to_base_sender
+                        .subscribe();
+                    let streaming_to_base_receiver_is_streaming_finished = self
+                        .communication_channel
+                        .streaming_to_base_is_finished
+                        .subscribe();
+
+                    let connect_command = Command::perform(
                         async move {
                             gui_utils::connect(
                                 microphone_stream_receiver,
@@ -195,13 +211,28 @@ impl Streamer {
                                 streamer_config,
                                 streaming_to_base_sender,
                                 base_to_streaming_receiver,
+                                streaming_to_base_sender_is_finished,
                                 microphone_stream_volume,
                                 audio_stream_volume,
                             )
                             .await
                         },
                         Message::State,
-                    )
+                    );
+
+                    let is_streaming_finished_command = Command::perform(
+                        async move {
+                            gui_utils::is_streaming_finished(
+                                streaming_to_base_receiver_is_streaming_finished,
+                                streaming_to_base_receiver_is_streaming_stopped,
+                            )
+                            .await
+                        },
+                        Message::State,
+                    );
+
+                    let commands = vec![connect_command, is_streaming_finished_command];
+                    Command::batch(commands)
                 }
                 Event::Disconnect => {
                     println!("Disconnect");
