@@ -26,7 +26,7 @@ const BUFFER_LENGTH: usize = 1000000;
 const MAX_TOLERATED_MESSAGE_COUNT: usize = 10;
 pub async fn start(relay_configs: Config) {
     let timer = Instant::now();
-    let acceptor = tls_configurator().await;
+    let mut acceptor = None;
     loop {
         //need to move them for multi streamer
         let (record_producer, record_consumer) = channel(BUFFER_LENGTH);
@@ -54,7 +54,8 @@ pub async fn start(relay_configs: Config) {
                     timer.elapsed()
                 );
                 if relay_configs.tls {
-                    match acceptor.accept(streamer_tcp).await {
+                    acceptor = Some(tls_configurator().await);
+                    match acceptor.clone().unwrap().accept(streamer_tcp).await {
                         Ok(streamer_tcp_tls) => {
                             match tokio_tungstenite::accept_async(streamer_tcp_tls).await {
                                 Ok(ws_stream) => {
@@ -118,7 +119,6 @@ pub async fn start(relay_configs: Config) {
             let listener_handler_task = tokio::spawn(listener_handler(
                 listener_socket,
                 acceptor.clone(),
-                relay_configs.tls,
                 buffered_producer.clone(),
                 listener_stream_tasks_producer,
                 timer,
@@ -164,8 +164,7 @@ async fn tls_configurator() -> TlsAcceptor {
 }
 async fn listener_handler(
     listener_socket: TcpListener,
-    acceptor: TlsAcceptor,
-    is_tls: bool,
+    acceptor: Option<TlsAcceptor>,
     buffered_producer: Sender<Message>,
     listener_stream_tasks_producer: tokio::sync::mpsc::Sender<JoinHandle<()>>,
     timer: Instant,
@@ -179,8 +178,8 @@ async fn listener_handler(
                         ip: listener_info.ip(),
                         port: listener_info.port(),
                     };
-                    if is_tls {
-                        match acceptor.accept(tcp_stream).await {
+                    match acceptor {
+                        Some(ref acceptor) => match acceptor.accept(tcp_stream).await {
                             Ok(listener_tcp_tls) => {
                                 match tokio_tungstenite::accept_async(listener_tcp_tls).await {
                                     Ok(wss_stream) => {
@@ -205,9 +204,8 @@ async fn listener_handler(
                                 drop(listener_socket);
                                 return;
                             }
-                        }
-                    } else {
-                        match tokio_tungstenite::accept_async(tcp_stream).await {
+                        },
+                        None => match tokio_tungstenite::accept_async(tcp_stream).await {
                             Ok(ws_stream) => {
                                 let listener_stream_task = tokio::spawn(stream(
                                     new_listener,
@@ -223,7 +221,7 @@ async fn listener_handler(
                                 drop(listener_socket);
                                 return;
                             }
-                        }
+                        },
                     }
                     println!("New Listener: {} | {:#?}", listener_info, timer.elapsed());
                 }
@@ -248,7 +246,6 @@ async fn status_checker(
 ) {
     let mut listener_counter = buffered_producer.receiver_count();
     let mut bottleneck_flag = false;
-    //let mut buffer_len = buffered_producer.len();
     loop {
         tokio::time::sleep(Duration::from_secs(3)).await;
         match streamer_alive_receiver.try_recv() {
@@ -258,8 +255,18 @@ async fn status_checker(
                     format!("{}:{}", streamer.ip, streamer.port)
                 );
                 let cleaning_timer = Instant::now();
-                message_organizer_task.as_ref().unwrap().abort();
-                buffer_layer_task.as_ref().unwrap().abort();
+                match message_organizer_task.as_ref() {
+                    Some(message_organizer_task) => message_organizer_task.abort(),
+                    None => {
+                        eprintln!("Error: Message Organizer Task -> None");
+                    }
+                }
+                match buffer_layer_task.as_ref() {
+                    Some(buffer_layer_task) => buffer_layer_task.abort(),
+                    None => {
+                        eprintln!("Error: Buffer Layer Task -> None");
+                    }
+                }
                 if let Err(_) = listener_socket_killer_producer.send(true) {
                     eprintln!("Error: Cleaning | Socket Kill Failed, Receiver Dropped");
                 }
