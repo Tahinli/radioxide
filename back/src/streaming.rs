@@ -26,7 +26,7 @@ const BUFFER_LENGTH: usize = 1000000;
 const MAX_TOLERATED_MESSAGE_COUNT: usize = 10;
 pub async fn start(relay_configs: Config) {
     let timer = Instant::now();
-    let acceptor = None;
+    let mut acceptor = None;
     loop {
         //need to move them for multi streamer
         let (record_producer, record_consumer) = channel(BUFFER_LENGTH);
@@ -54,8 +54,8 @@ pub async fn start(relay_configs: Config) {
                     timer.elapsed()
                 );
                 if relay_configs.tls {
-                    let acceptor = tls_configurator().await;
-                    match acceptor.accept(streamer_tcp).await {
+                    acceptor = Some(tls_configurator().await);
+                    match acceptor.clone().unwrap().accept(streamer_tcp).await {
                         Ok(streamer_tcp_tls) => {
                             match tokio_tungstenite::accept_async(streamer_tcp_tls).await {
                                 Ok(ws_stream) => {
