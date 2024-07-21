@@ -19,6 +19,8 @@ use crate::{
 
 const AUDIOS_PATH: &str = "audios";
 
+const AUDIO_SCROLLABLE_BUTTON_SIZE: u16 = 35;
+
 #[derive(Debug, Clone)]
 pub enum Player {
     Play,
@@ -710,10 +712,28 @@ impl Streamer {
         )
         .step(0.01);
 
+        let audio_file_size_for_scrollable = match self.audio_miscellaneous.files.as_ref() {
+            Some(audio_files) => audio_files.len() as u16 * (AUDIO_SCROLLABLE_BUTTON_SIZE + 1),
+            None => 0,
+        };
+
+        let longest_name_for_scrollable = match self.audio_miscellaneous.files.as_ref() {
+            Some(audio_files) => {
+                let mut longest = 0;
+                for audio_file in audio_files {
+                    if longest < audio_file.len() {
+                        longest = audio_file.len();
+                    }
+                }
+                longest as u16 * 10
+            }
+            None => 0,
+        };
+
         let mut audio_scrollable_content = column![]
             .spacing(1)
-            .height(Length::Fill)
-            .width(Length::Fill);
+            .height(audio_file_size_for_scrollable)
+            .width(longest_name_for_scrollable);
         let audio_selected = text_centered(format!(
             "Selected: {}",
             self.audio_miscellaneous.selected_file_name.clone()
@@ -726,12 +746,13 @@ impl Streamer {
             for file in self.audio_miscellaneous.files.as_ref().clone().unwrap() {
                 let button = button_with_centered_text(file)
                     .on_press(Message::Event(Event::ChooseAudio(file.to_string())));
-                audio_scrollable_content = audio_scrollable_content.push(button.height(35));
+                audio_scrollable_content =
+                    audio_scrollable_content.push(button.height(AUDIO_SCROLLABLE_BUTTON_SIZE));
             }
         }
         let audios_scrollable = scrollable(audio_scrollable_content)
-            .height(Length::Fill)
-            .width(Length::Fill);
+            .height(200)
+            .width(longest_name_for_scrollable);
         let audio_info_content = column![audio_selected, audio_playing,].height(60);
         let header_content = row![header].width(350).height(50);
         let text_content = row![
