@@ -216,6 +216,7 @@ pub async fn stop_playing(
         }
     }
     drop(base_to_playing_sender);
+    playing_to_base_receiver = playing_to_base_receiver.resubscribe();
     let answer = playing_to_base_receiver.recv().await;
     drop(playing_to_base_receiver);
     match answer {
