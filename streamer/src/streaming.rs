@@ -1,13 +1,15 @@
-use std::{cmp::min, io::Write, sync::Arc, time::Duration};
+use std::{
+    cmp::min,
+    io::Write,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use brotli::CompressorWriter;
 use futures_util::SinkExt;
 use ringbuf::HeapRb;
 use tokio::{
-    sync::{
-        broadcast::{channel, Receiver, Sender},
-        Mutex,
-    },
+    sync::broadcast::{channel, Receiver, Sender},
     task::JoinHandle,
 };
 use tokio_tungstenite::tungstenite::Message;
@@ -157,8 +159,8 @@ async fn mixer(
         }
 
         let mut flow = vec![];
-        let microphone_volume = *microphone_stream_volume.lock().await;
-        let audio_volume = *audio_stream_volume.lock().await;
+        let microphone_volume = *microphone_stream_volume.lock().unwrap();
+        let audio_volume = *audio_stream_volume.lock().unwrap();
 
         for element in microphone_stream {
             if element < 0.01 || element > -0.01 {
