@@ -3,13 +3,24 @@ name = "streamer"
 version = "0.1.0"
 edition = "2021"
 
+[profile.release]
+strip = "symbols"
+opt-level = 3
+overflow-checks = true
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[lints.rust]
+unsafe_code = "forbid"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 brotli = "5.0.0"
 cpal = "0.15.3"
 futures-util = { version = "0.3.30", features = ["futures-sink", "sink"] }
-iced = { git = "https://github.com/iced-rs/iced", features = ["tokio"] }
+iced = { git = "https://github.com/iced-rs/iced", features = ["tokio"], rev = "dcdf1307006883f50083c186ca7b8656bfa60873"}
 ringbuf = "0.3.3"
 rubato = "0.15.0"
 rustls-pemfile = "2.1.2"

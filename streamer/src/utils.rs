@@ -1,14 +1,11 @@
-use tokio::{fs::File, io::AsyncReadExt};
+use std::{fs::File, io::Read};
 
 use crate::Config;
 
-pub async fn get_config() -> Config {
-    let mut config_file = File::open("configs/streamer_configs.txt").await.unwrap();
+pub fn get_config() -> Config {
+    let mut config_file = File::open("configs/streamer_configs.txt").unwrap();
     let mut configs_unparsed = String::new();
-    config_file
-        .read_to_string(&mut configs_unparsed)
-        .await
-        .unwrap();
+    config_file.read_to_string(&mut configs_unparsed).unwrap();
 
     let configs_parsed: Vec<&str> = configs_unparsed.split_terminator("\n").collect();
     let mut configs_cleaned: Vec<&str> = vec![];

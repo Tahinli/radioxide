@@ -1,9 +1,11 @@
-use std::{fs::File, path::Path, sync::Arc, time::Duration};
-
-use tokio::sync::{
-    broadcast::{Receiver, Sender},
-    Mutex,
+use std::{
+    fs::File,
+    path::Path,
+    sync::{Arc, Mutex},
+    time::Duration,
 };
+
+use tokio::sync::broadcast::{Receiver, Sender};
 
 use crate::{
     gui::{Player, State},
@@ -348,7 +350,7 @@ pub async fn change_microphone_volume(
     desired_value: f32,
     microphone_stream_volume: Arc<Mutex<f32>>,
 ) -> State {
-    *microphone_stream_volume.lock().await = desired_value;
+    *microphone_stream_volume.lock().unwrap() = desired_value;
     State::MicrophoneVolumeChanged
 }
 
@@ -356,7 +358,7 @@ pub async fn change_audio_volume(
     desired_value: f32,
     audio_stream_volume: Arc<Mutex<f32>>,
 ) -> State {
-    *audio_stream_volume.lock().await = desired_value;
+    *audio_stream_volume.lock().unwrap() = desired_value;
     State::AudioVolumeChanged
 }
 
