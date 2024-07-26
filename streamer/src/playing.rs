@@ -211,10 +211,15 @@ async fn process_audio(
         window: WindowFunction::BlackmanHarris2,
     };
 
-    let chunk_size = match decode_audio(&mut format, track_id, &mut decoder) {
-        Some((audio_decoded_left_channel, _)) => audio_decoded_left_channel.len(),
-        None => return,
-    };
+    let (chunk_size, audio_decoded_left, audio_decoded_right) =
+        match decode_audio(&mut format, track_id, &mut decoder) {
+            Some((audio_decoded_left_channel, audio_decoded_right_channel)) => (
+                audio_decoded_left_channel.len(),
+                audio_decoded_left_channel,
+                audio_decoded_right_channel,
+            ),
+            None => return,
+        };
 
     let mut resampler = SincFixedIn::<f64>::new(
         output_device_sample_rate as f64 / audio_sample_rate as f64,
@@ -224,6 +229,14 @@ async fn process_audio(
         2,
     )
     .unwrap();
+
+    let (audio_resampled_left, audio_resampled_right) =
+        resample_audio(audio_decoded_left, audio_decoded_right, &mut resampler);
+
+    for (single_left, single_right) in audio_resampled_left.iter().zip(&audio_resampled_right) {
+        let _ = decoded_to_playing_sender.send(*single_left as f32);
+        let _ = decoded_to_playing_sender.send(*single_right as f32);
+    }
 
     loop {
         let (mut audio_decoded_left, mut audio_decoded_right) = (vec![], vec![]);
