@@ -10,6 +10,8 @@ pub const BUFFER_LENGTH: usize = 1000000;
 pub const AUDIO_PATH: &str = "audio";
 pub const AUDIO_BUFFER_SIZE: usize = 1048576;
 pub const AUDIO_SCROLLABLE_BUTTON_SIZE: u16 = 35;
+pub const WINDOW_SIZE_WIDTH: u16 = 450;
+pub const WINDOW_SIZE_HEIGHT: u16 = 650;
 
 #[derive(Debug, Clone)]
 pub struct Config {
