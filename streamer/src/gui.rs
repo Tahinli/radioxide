@@ -18,6 +18,7 @@ use crate::{
     gui_utils::{self, change_audio_volume, change_microphone_volume},
     utils::get_config,
     Config, AUDIO_BUFFER_SIZE, AUDIO_PATH, AUDIO_SCROLLABLE_BUTTON_SIZE, BUFFER_LENGTH,
+    WINDOW_SIZE_WIDTH,
 };
 
 #[derive(Debug, Clone)]
@@ -128,11 +129,6 @@ pub struct Streamer {
     audio_miscellaneous: AudioMiscellaneous,
     gui_status: GUIStatus,
 }
-impl Default for Streamer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 impl Streamer {
     pub fn new_with_load() -> (Self, Task<Message>) {
@@ -182,44 +178,7 @@ impl Streamer {
             ),
         )
     }
-    fn new() -> Self {
-        Self {
-            config: None,
-            data_channel: DataChannel {
-                microphone_stream_sender: channel(BUFFER_LENGTH).0,
-                audio_stream_sender: channel(BUFFER_LENGTH).0,
-            },
-            communication_channel: CommunicationChannel {
-                base_to_streaming_sender: channel(1).0,
-                streaming_to_base_sender: channel(1).0,
-                streaming_to_base_is_finished: channel(1).0,
-                base_to_recording_sender: channel(1).0,
-                recording_to_base_sender: channel(1).0,
-                base_to_playing_sender: channel(1).0,
-                playing_to_base_sender: channel(1).0,
-            },
-            audio_miscellaneous: AudioMiscellaneous {
-                file: None,
-                selected_file_name: String::new(),
-                playing_file_name: String::new(),
-                files: None,
-                decoded_to_playing_sender: Some(channel(AUDIO_BUFFER_SIZE).0),
-                should_decode_now_sender: Some(channel(1).0),
-            },
-            gui_status: GUIStatus {
-                are_we_connect: Condition::Passive,
-                are_we_record: Condition::Passive,
-                are_we_play_audio: Condition::Passive,
-                are_we_paused_audio: Condition::Passive,
-                microphone_volume: ChangeableValue {
-                    value: Arc::new(1.0.into()),
-                },
-                audio_volume: ChangeableValue {
-                    value: Arc::new(1.0.into()),
-                },
-            },
-        }
-    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Event(event) => match event {
@@ -782,11 +741,13 @@ impl Streamer {
                     audio_scrollable_content.push(button.height(AUDIO_SCROLLABLE_BUTTON_SIZE));
             }
         }
-        let audios_scrollable = scrollable(audio_scrollable_content).height(200).width(350);
+        let audios_scrollable = scrollable(audio_scrollable_content)
+            .height(200)
+            .width(WINDOW_SIZE_WIDTH);
         let audio_info_content = column![audio_selected, audio_playing,]
             .height(100)
             .width(longest_audio_name);
-        let header_content = row![header].width(350).height(50);
+        let header_content = row![header].width(WINDOW_SIZE_WIDTH).height(50);
         let text_content = row![
             connection_text,
             Rule::vertical(1),
@@ -797,7 +758,7 @@ impl Streamer {
             pause_audio_text,
         ]
         .spacing(5)
-        .width(350)
+        .width(WINDOW_SIZE_WIDTH)
         .height(35);
 
         let status_content = row![
@@ -810,7 +771,7 @@ impl Streamer {
             paused_audio_status_text,
         ]
         .spacing(5)
-        .width(350)
+        .width(WINDOW_SIZE_WIDTH)
         .height(35);
         let button_content = row![
             connect_button,
@@ -819,11 +780,11 @@ impl Streamer {
             pause_audio_button,
         ]
         .spacing(5)
-        .width(350)
+        .width(WINDOW_SIZE_WIDTH)
         .height(35);
         let volume_content = row![microphone_volume_slider, audio_volume_slider,]
             .spacing(5)
-            .width(350)
+            .width(WINDOW_SIZE_WIDTH)
             .height(35);
         let content = column![
             header_content,
