@@ -1,4 +1,4 @@
-address: 192.168.1.2:2525
+address: radioxide_streamer.tahinli.com
 quality: 6
 latency: 100
-tls: false
+tls: true
