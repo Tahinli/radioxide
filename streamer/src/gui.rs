@@ -536,7 +536,7 @@ impl Streamer {
                     iced::Event::Window(windows_event) => Task::perform(
                         {
                             if let window::Event::CloseRequested = windows_event {
-                                self.exit();
+                                let _ = self.exit();
                             }
                             async move {
                                 let files = gui_utils::list_files(Path::new(AUDIO_PATH)).await;
