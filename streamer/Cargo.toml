@@ -19,8 +19,8 @@ unsafe_code = "forbid"
 [dependencies]
 brotli = "5.0.0"
 cpal = "0.15.3"
-futures-util = { version = "0.3.30", features = ["futures-sink", "sink"] }
-iced = { git = "https://github.com/iced-rs/iced", features = ["tokio"], rev = "dcdf1307006883f50083c186ca7b8656bfa60873"}
+futures-util = { version = "0.3.31", features = ["futures-sink", "sink"] }
+iced = { git = "https://github.com/iced-rs/iced", features = ["tokio"], rev = "42a2cb6d4f78343f43d6a68a28e5502d9426ed2c"}
 ringbuf = "0.3.3"
 rubato = "0.15.0"
 rustls-pemfile = "2.1.2"
