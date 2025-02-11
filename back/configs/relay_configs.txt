@@ -1,5 +1,5 @@
-axum_address: 192.168.1.2:2323
-listener_address: 192.168.1.2:2424
-streamer_address: 192.168.1.2:2525
+axum_address: 127.0.0.1:2323
+listener_address: 127.0.0.1:2424
+streamer_address: 127.0.0.1:2525
 latency: 50
 tls: false

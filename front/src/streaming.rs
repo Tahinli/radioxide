@@ -15,7 +15,7 @@ pub async fn start_listening(
 ) {
     if is_listening() {
         log::info!("Trying Sir");
-        let connect_addr = "ws://192.168.1.2:2424";
+        let connect_addr = "ws://127.0.0.1:2424";
 
         let ws_stream: tokio_tungstenite_wasm::WebSocketStream;
         match tokio_tungstenite_wasm::connect(connect_addr).await {
