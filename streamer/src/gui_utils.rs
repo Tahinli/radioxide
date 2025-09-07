@@ -38,7 +38,7 @@ pub async fn disconnect(
     }
 }
 
-pub async fn record(
+pub async fn start_recording(
     sound_stream_sender: Sender<f32>,
     recording_to_base: Sender<bool>,
     base_to_recording: Receiver<bool>,
@@ -69,6 +69,21 @@ pub async fn stop_recording(
         Err(err_val) => {
             eprintln!("Error: Communication | {}", err_val);
             State::Recording
+        }
+    }
+}
+
+pub async fn start_playing_audio(
+    playing_audio_to_base: Sender<bool>,
+    base_to_playing_audio: Receiver<bool>,
+) -> State {
+    //tokio::spawn(future);
+    let mut playing_audio_to_base_receiver = playing_audio_to_base.subscribe();
+    match playing_audio_to_base_receiver.recv().await {
+        Ok(_) => State::PlayingAudio,
+        Err(err_val) => {
+            eprint!("Error: Communication | Playing | {}", err_val);
+            State::StopAudio
         }
     }
 }

@@ -6,7 +6,7 @@ async fn main() {
     tokio::task::block_in_place(|| {
         iced::program("Streamer GUI", Streamer::update, Streamer::view)
             .centered()
-            .window_size((350.0, 400.0))
+            .window_size((350.0, 450.0))
             .load(Streamer::load_config)
             .antialiasing(true)
             .subscription(Streamer::subscription)

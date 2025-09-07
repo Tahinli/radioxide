@@ -1,6 +1,6 @@
 use iced::{
     alignment,
-    widget::{button, text, Button},
+    widget::{button, text, Button, Text},
     Length,
 };
 
@@ -14,4 +14,11 @@ pub fn button_with_centered_text(txt: &'static str) -> Button<'static, Message> 
     )
     .height(Length::Fill)
     .width(Length::Fill)
+}
+
+pub fn text_centered(txt: &'static str) -> Text {
+    text(txt)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .horizontal_alignment(alignment::Horizontal::Center)
 }
