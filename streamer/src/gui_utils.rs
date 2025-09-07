@@ -172,6 +172,7 @@ pub async fn stop_recording(
 pub async fn start_playing(
     audio_stream_sender: Sender<f32>,
     decoded_to_playing_sender: Sender<f32>,
+    should_decode_now_sender: Sender<bool>,
     file: File,
     playing_to_base_sender: Sender<Player>,
     base_to_playing_receiver: Receiver<Player>,
@@ -182,6 +183,7 @@ pub async fn start_playing(
         audio_stream_sender,
         file,
         decoded_to_playing_sender,
+        should_decode_now_sender,
         playing_to_base_sender,
         base_to_playing_receiver,
         audio_volume,

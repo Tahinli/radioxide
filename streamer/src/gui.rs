@@ -1,5 +1,4 @@
 use std::{
-    cmp::max,
     fs::File,
     path::Path,
     process::exit,
@@ -18,12 +17,8 @@ use crate::{
     gui_components::{button_with_centered_text, text_centered},
     gui_utils::{self, change_audio_volume, change_microphone_volume},
     utils::get_config,
-    Config, BUFFER_LENGTH,
+    Config, AUDIO_BUFFER_SIZE, AUDIO_PATH, AUDIO_SCROLLABLE_BUTTON_SIZE, BUFFER_LENGTH,
 };
-
-const AUDIOS_PATH: &str = "audios";
-
-const AUDIO_SCROLLABLE_BUTTON_SIZE: u16 = 35;
 
 #[derive(Debug, Clone)]
 pub enum Player {
@@ -46,6 +41,7 @@ struct AudioMiscellaneous {
     playing_file_name: String,
     files: Option<Vec<String>>,
     decoded_to_playing_sender: Option<Sender<f32>>,
+    should_decode_now_sender: Option<Sender<bool>>,
 }
 
 #[derive(Debug, Clone)]
@@ -161,7 +157,8 @@ impl Streamer {
                     selected_file_name: String::new(),
                     playing_file_name: String::new(),
                     files: None,
-                    decoded_to_playing_sender: None,
+                    decoded_to_playing_sender: Some(channel(AUDIO_BUFFER_SIZE).0),
+                    should_decode_now_sender: Some(channel(1).0),
                 },
                 gui_status: GUIStatus {
                     are_we_connect: Condition::Passive,
@@ -206,7 +203,8 @@ impl Streamer {
                 selected_file_name: String::new(),
                 playing_file_name: String::new(),
                 files: None,
-                decoded_to_playing_sender: None,
+                decoded_to_playing_sender: Some(channel(AUDIO_BUFFER_SIZE).0),
+                should_decode_now_sender: Some(channel(1).0),
             },
             gui_status: GUIStatus {
                 are_we_connect: Condition::Passive,
@@ -359,7 +357,7 @@ impl Streamer {
                     self.gui_status.are_we_play_audio = Condition::Loading;
                     let path = format!(
                         "{}/{}",
-                        AUDIOS_PATH, self.audio_miscellaneous.selected_file_name
+                        AUDIO_PATH, self.audio_miscellaneous.selected_file_name
                     );
                     match File::open(path) {
                         Ok(file) => {
@@ -372,21 +370,7 @@ impl Streamer {
                             return Task::none();
                         }
                     }
-                    self.audio_miscellaneous.decoded_to_playing_sender = Some(
-                        channel(max(
-                            self.audio_miscellaneous
-                                .file
-                                .as_ref()
-                                .unwrap()
-                                .metadata()
-                                .unwrap()
-                                .len() as usize
-                                * 10,
-                            1,
-                        ))
-                        .0,
-                    );
-
+                    self.audio_miscellaneous.should_decode_now_sender = Some(channel(1).0);
                     let audio_stream_sender = self.data_channel.audio_stream_sender.clone();
                     let playing_to_base_sender =
                         self.communication_channel.playing_to_base_sender.clone();
@@ -428,12 +412,17 @@ impl Streamer {
                         .unwrap();
 
                     let audio_volume = self.gui_status.audio_volume.value.clone();
-
+                    let should_decode_now_sender = self
+                        .audio_miscellaneous
+                        .should_decode_now_sender
+                        .clone()
+                        .unwrap();
                     let playing_command = Task::perform(
                         async move {
                             gui_utils::start_playing(
                                 audio_stream_sender,
                                 decoded_to_playing_sender_for_playing,
+                                should_decode_now_sender,
                                 file,
                                 playing_to_base_sender,
                                 base_to_playing_receiver,
@@ -525,7 +514,7 @@ impl Streamer {
                     )
                 }
                 Event::ChooseAudio(chosen_audio) => {
-                    let path = format!("{}/{}", AUDIOS_PATH, chosen_audio);
+                    let path = format!("{}/{}", AUDIO_PATH, chosen_audio);
                     match File::open(path) {
                         Ok(file) => {
                             self.audio_miscellaneous.file = Some(file);
@@ -566,21 +555,21 @@ impl Streamer {
                 Event::IcedEvent(iced_event) => match iced_event {
                     iced::Event::Keyboard(_) => Task::perform(
                         async move {
-                            let files = gui_utils::list_files(Path::new(AUDIOS_PATH)).await;
+                            let files = gui_utils::list_files(Path::new(AUDIO_PATH)).await;
                             Event::ListFiles(files)
                         },
                         Message::Event,
                     ),
                     iced::Event::Mouse(_) => Task::perform(
                         async move {
-                            let files = gui_utils::list_files(Path::new(AUDIOS_PATH)).await;
+                            let files = gui_utils::list_files(Path::new(AUDIO_PATH)).await;
                             Event::ListFiles(files)
                         },
                         Message::Event,
                     ),
                     iced::Event::Touch(_) => Task::perform(
                         async move {
-                            let files = gui_utils::list_files(Path::new(AUDIOS_PATH)).await;
+                            let files = gui_utils::list_files(Path::new(AUDIO_PATH)).await;
                             Event::ListFiles(files)
                         },
                         Message::Event,
@@ -591,7 +580,7 @@ impl Streamer {
                                 self.exit();
                             }
                             async move {
-                                let files = gui_utils::list_files(Path::new(AUDIOS_PATH)).await;
+                                let files = gui_utils::list_files(Path::new(AUDIO_PATH)).await;
                                 Event::ListFiles(files)
                             }
                         },
@@ -872,7 +861,7 @@ impl Streamer {
     pub fn list_files() -> Task<Message> {
         Task::perform(
             async move {
-                let files = gui_utils::list_files(Path::new(AUDIOS_PATH)).await;
+                let files = gui_utils::list_files(Path::new(AUDIO_PATH)).await;
                 Event::ListFiles(files)
             },
             Message::Event,
