@@ -1,9 +1,9 @@
-use std::{fs::File, sync::Arc};
+use std::{fs::File, path::Path, sync::Arc};
 
 use iced::{
     alignment,
-    widget::{column, container, row, slider, text::LineHeight, Container, Rule},
-    window, Color, Command, Subscription,
+    widget::{column, container, row, scrollable, slider, text::LineHeight, Container, Rule},
+    window, Color, Command, Length, Subscription,
 };
 use tokio::sync::{
     broadcast::{channel, Receiver, Sender},
@@ -16,6 +16,8 @@ use crate::{
     utils::get_config,
     Config, BUFFER_LENGTH,
 };
+
+const AUDIOS_PATH: &str = "audios";
 
 #[derive(Debug, Clone)]
 pub enum Player {
@@ -32,8 +34,11 @@ struct Features {
 }
 
 #[derive(Debug)]
-struct AudioFile {
+struct AudioMiscellaneous {
     file: Option<File>,
+    selected_file_name: String,
+    playing_file_name: String,
+    files: Option<Vec<String>>,
     decoded_to_playing_sender: Option<Sender<f32>>,
 }
 
@@ -48,9 +53,11 @@ pub enum Event {
     StopAudio,
     PauseAudio,
     ContinueAudio,
+    ChooseAudio(String),
     ChangeMicrophoneVolume(f32),
     ChangeAudioVolume(f32),
     LoadConfig(Config),
+    ListFiles(Option<Vec<String>>),
     IcedEvent(iced::Event),
     CloseWindow(window::Id),
 }
@@ -115,7 +122,7 @@ pub struct Streamer {
     config: Option<Config>,
     data_channel: DataChannel,
     communication_channel: CommunicationChannel,
-    audio_file: AudioFile,
+    audio_miscellaneous: AudioMiscellaneous,
     gui_status: GUIStatus,
 }
 impl Default for Streamer {
@@ -140,8 +147,11 @@ impl Streamer {
                 base_to_playing_sender: channel(1).0,
                 playing_to_base_sender: channel(1).0,
             },
-            audio_file: AudioFile {
+            audio_miscellaneous: AudioMiscellaneous {
                 file: None,
+                selected_file_name: String::new(),
+                playing_file_name: String::new(),
+                files: None,
                 decoded_to_playing_sender: None,
             },
             gui_status: GUIStatus {
@@ -165,7 +175,6 @@ impl Streamer {
                 Event::Connect => {
                     println!("Connect");
                     self.gui_status.are_we_connect = Condition::Loading;
-
                     let microphone_stream_receiver =
                         self.data_channel.microphone_stream_sender.subscribe();
                     let audio_stream_receiver = self.data_channel.audio_stream_sender.subscribe();
@@ -265,12 +274,9 @@ impl Streamer {
                     println!("Play Audio");
                     self.gui_status.are_we_play_audio = Condition::Loading;
 
-                    let file = File::open("music.mp3").unwrap();
-                    self.audio_file.file = Some(file);
-
-                    self.audio_file.decoded_to_playing_sender = Some(
+                    self.audio_miscellaneous.decoded_to_playing_sender = Some(
                         channel(
-                            self.audio_file
+                            self.audio_miscellaneous
                                 .file
                                 .as_ref()
                                 .unwrap()
@@ -303,12 +309,24 @@ impl Streamer {
                     let base_to_playing_sender =
                         self.communication_channel.base_to_playing_sender.clone();
 
-                    let file = self.audio_file.file.as_ref().unwrap().try_clone().unwrap();
-                    let decoded_to_playing_sender_for_playing =
-                        self.audio_file.decoded_to_playing_sender.clone().unwrap();
+                    let file = self
+                        .audio_miscellaneous
+                        .file
+                        .as_ref()
+                        .unwrap()
+                        .try_clone()
+                        .unwrap();
+                    let decoded_to_playing_sender_for_playing = self
+                        .audio_miscellaneous
+                        .decoded_to_playing_sender
+                        .clone()
+                        .unwrap();
 
-                    let decoded_to_playing_sender_for_is_finished =
-                        self.audio_file.decoded_to_playing_sender.clone().unwrap();
+                    let decoded_to_playing_sender_for_is_finished = self
+                        .audio_miscellaneous
+                        .decoded_to_playing_sender
+                        .clone()
+                        .unwrap();
 
                     let audio_volume = self.gui_status.audio_volume.value.clone();
 
@@ -407,6 +425,12 @@ impl Streamer {
                         Message::State,
                     )
                 }
+                Event::ChooseAudio(chosen_audio) => {
+                    let path = format!("{}/{}", AUDIOS_PATH, chosen_audio);
+                    self.audio_miscellaneous.file = Some(File::open(path).unwrap());
+                    self.audio_miscellaneous.selected_file_name = chosen_audio;
+                    Command::none()
+                }
                 Event::ChangeMicrophoneVolume(value) => {
                     *self.gui_status.microphone_volume.value.blocking_lock() = value;
                     let microphone_volume = self.gui_status.microphone_volume.value.clone();
@@ -427,18 +451,52 @@ impl Streamer {
                     self.config = Some(config);
                     Command::none()
                 }
+                Event::ListFiles(files) => {
+                    self.audio_miscellaneous.files = files;
+                    Command::none()
+                }
                 Event::IcedEvent(iced_event) => match iced_event {
-                    iced::Event::Keyboard(_) => Command::none(),
-                    iced::Event::Mouse(_) => Command::none(),
+                    iced::Event::Keyboard(_) => Command::perform(
+                        async move {
+                            let files = gui_utils::list_files(Path::new(AUDIOS_PATH)).await;
+                            Event::ListFiles(files)
+                        },
+                        Message::Event,
+                    ),
+                    iced::Event::Mouse(_) => Command::perform(
+                        async move {
+                            let files = gui_utils::list_files(Path::new(AUDIOS_PATH)).await;
+                            Event::ListFiles(files)
+                        },
+                        Message::Event,
+                    ),
                     iced::Event::Window(id, window_event) => {
                         if let window::Event::CloseRequested = window_event {
                             self.exit(id)
                         } else {
-                            Command::none()
+                            Command::perform(
+                                async move {
+                                    let files = gui_utils::list_files(Path::new(AUDIOS_PATH)).await;
+                                    Event::ListFiles(files)
+                                },
+                                Message::Event,
+                            )
                         }
                     }
-                    iced::Event::Touch(_) => Command::none(),
-                    iced::Event::PlatformSpecific(_) => Command::none(),
+                    iced::Event::Touch(_) => Command::perform(
+                        async move {
+                            let files = gui_utils::list_files(Path::new(AUDIOS_PATH)).await;
+                            Event::ListFiles(files)
+                        },
+                        Message::Event,
+                    ),
+                    iced::Event::PlatformSpecific(_) => Command::perform(
+                        async move {
+                            let files = gui_utils::list_files(Path::new(AUDIOS_PATH)).await;
+                            Event::ListFiles(files)
+                        },
+                        Message::Event,
+                    ),
                 },
                 Event::CloseWindow(id) => window::close(id),
             },
@@ -461,11 +519,14 @@ impl Streamer {
                     Command::none()
                 }
                 State::PlayingAudio => {
+                    self.audio_miscellaneous.playing_file_name =
+                        self.audio_miscellaneous.selected_file_name.clone();
                     self.gui_status.are_we_play_audio = Condition::Active;
                     self.gui_status.are_we_paused_audio = Condition::Passive;
                     Command::none()
                 }
                 State::StopAudio => {
+                    self.audio_miscellaneous.playing_file_name = String::new();
                     self.gui_status.are_we_play_audio = Condition::Passive;
                     Command::none()
                 }
@@ -545,10 +606,17 @@ impl Streamer {
                 play_audio_status_text = text_centered("Loading").color(color_yellow);
                 button_with_centered_text("Processing")
             }
-            Condition::Passive => {
-                play_audio_status_text = text_centered("Passive").color(color_pink);
-                button_with_centered_text("Play Audio").on_press(Message::Event(Event::PlayAudio))
-            }
+            Condition::Passive => match self.audio_miscellaneous.file {
+                Some(_) => {
+                    play_audio_status_text = text_centered("Passive").color(color_pink);
+                    button_with_centered_text("Play Audio")
+                        .on_press(Message::Event(Event::PlayAudio))
+                }
+                None => {
+                    play_audio_status_text = text_centered("No Audio").color(color_pink);
+                    button_with_centered_text("No Audio")
+                }
+            },
         };
 
         let pause_audio_button = if let Condition::Active = self.gui_status.are_we_play_audio {
@@ -587,6 +655,29 @@ impl Streamer {
         )
         .step(0.01);
 
+        let mut audio_scrollable_content = column![]
+            .spacing(1)
+            .height(Length::Fill)
+            .width(Length::Fill);
+        let audio_selected = text_centered(format!(
+            "Selected: {}",
+            self.audio_miscellaneous.selected_file_name.clone()
+        ));
+        let audio_playing = text_centered(format!(
+            "Playing: {}",
+            self.audio_miscellaneous.playing_file_name.clone()
+        ));
+        if self.audio_miscellaneous.files.is_some() {
+            for file in self.audio_miscellaneous.files.as_ref().clone().unwrap() {
+                let button = button_with_centered_text(file)
+                    .on_press(Message::Event(Event::ChooseAudio(file.to_string())));
+                audio_scrollable_content = audio_scrollable_content.push(button.height(35));
+            }
+        }
+        let audios_scrollable = scrollable(audio_scrollable_content)
+            .height(Length::Fill)
+            .width(Length::Fill);
+        let audio_info_content = column![audio_selected, audio_playing,].height(60);
         let header_content = row![header].width(350).height(50);
         let text_content = row![
             connection_text,
@@ -634,12 +725,14 @@ impl Streamer {
             status_content,
             Rule::horizontal(1),
             volume_content,
+            audios_scrollable,
+            audio_info_content,
         ]
         .spacing(20)
-        .width(350)
-        .height(300);
+        .width(Length::Fill)
+        .height(Length::Fill);
         container(content)
-            .height(300)
+            .height(Length::Fill)
             .center_x()
             .align_y(alignment::Vertical::Top)
     }
@@ -653,6 +746,15 @@ impl Streamer {
             async move {
                 let config = get_config().await;
                 Event::LoadConfig(config)
+            },
+            Message::Event,
+        )
+    }
+    pub fn list_files() -> Command<Message> {
+        Command::perform(
+            async move {
+                let files = gui_utils::list_files(Path::new(AUDIOS_PATH)).await;
+                Event::ListFiles(files)
             },
             Message::Event,
         )
