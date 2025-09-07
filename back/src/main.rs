@@ -19,7 +19,10 @@ async fn main() {
             .parse::<SocketAddr>()
             .unwrap(),
     );
-    println!("\n\n\tOn Air -> http://{}\n\n", relay_config.axum_address.clone());
+    println!(
+        "\n\n\tOn Air -> http://{}\n\n",
+        relay_config.axum_address.clone()
+    );
     tokio::spawn(streaming::start(relay_config));
     axum_server::bind_rustls(addr, rustls_config)
         .serve(app.into_make_service())
