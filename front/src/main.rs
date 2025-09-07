@@ -77,7 +77,7 @@ fn app() -> Element {
         page_base {}
         div {
             audio{  
-                    src:"https://radioxide.tahinli.com.tr/audios/music.opus",
+                    src:"https://radioxide.tahinli.com.tr:2323/stream",
                     controls:true, 
                     autoplay: true,
                     muted:false,

@@ -1,5 +1,7 @@
 use crate::{AppState, ServerStatus, CoinStatus};
-use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
+use axum::{body::Body, extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
+use tokio::fs::File;
+use tokio_util::io::ReaderStream;
 use tower_http::cors::CorsLayer;
 use rand::prelude::*;
 
@@ -7,6 +9,7 @@ pub async fn routing(State(state): State<AppState>) -> Router {
     Router::new()
     .route("/", get(alive))
     .route("/coin", get(flip_coin))
+    .route("/stream", get(stream))
     .layer(CorsLayer::permissive())
     .with_state(state.clone())
 }
@@ -31,4 +34,10 @@ async fn flip_coin() -> impl IntoResponse {
     });
     println!("{}", coin_json);
     (StatusCode::OK, Json(coin_json))
+}
+
+async fn stream() -> impl IntoResponse {
+    let file = File::open("audios/audio.mp3").await.unwrap();
+    let stream = ReaderStream::new(file);
+    Body::from_stream(stream)
 }
