@@ -60,7 +60,7 @@ pub async fn sound_stream(
     mut producer: Producer<f32, Arc<SharedRb<f32, Vec<MaybeUninit<f32>>>>>,
 ) {
     log::info!("Attention! We need cables");
-    
+
     while let Some(msg) = stream_consumer.next().await {
         if is_listening() {
             let data = String::from_utf8(msg.unwrap().into()).unwrap();
