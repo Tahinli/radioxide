@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use serde::Deserialize;
 
-const SERVER_ADDRESS: &str = "http://localhost:2323";
+const SERVER_ADDRESS: &str = "https://localhost:2323";
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 struct ServerStatus{
     status: String,
@@ -13,6 +13,7 @@ struct CoinStatus{
 
 fn main() {
     println!("Hello, world!");
+    wasm_logger::init(wasm_logger::Config::default());
     launch(app);
 }
 
@@ -24,9 +25,9 @@ async fn coin_status_check() -> Result<CoinStatus, reqwest::Error> {
 }
 fn app() -> Element {
     rsx! {
-        { page_base() }
-        { coin_status_renderer() }
-        { server_status_renderer() }
+        page_base {}
+        coin_status_renderer {}
+        server_status_renderer {}
     }
 }
 
@@ -75,33 +76,44 @@ fn server_status_renderer() -> Element {
     }
 }
 fn coin_status_renderer() -> Element {
-    let mut coin_response = use_resource(move || coin_status_check());
-    match &*coin_response.value().read() {
-        Some(Ok(coin_status)) => {
-            rsx! {
-                button { 
-                    onclick: move |_| coin_response.restart(),
-                    "style":"width: 70px; height: 40px;",
+    let is_loading = use_signal(|| false);
+    let coin_result = use_signal(|| CoinStatus{status:"None".to_string(),});
+    let call_coin = move |_| {
+        spawn({
+            to_owned![is_loading];
+            to_owned![coin_result];
+            is_loading.set(true);
+            async move {
+                match coin_status_check().await {
+                    Ok(coin_status) => {
+                        is_loading.set(false);
+                        coin_result.set(coin_status);
+                    }
+                    Err(err_val) => {
+                        is_loading.set(false);
+                        log::info!("{}", err_val);
+                    }
+                }
+            }
+        });
+    };
+    log::info!("{}", is_loading);
+    rsx! {
+        div {
+            button {
+                disabled: is_loading(),
+                onclick: call_coin,
+                "style":"width: 80px; height: 50px;",
+                if is_loading() {
+                    "Loading"
+                }else {
                     "Coin Flip"
                 }
-                ShowCoinStatus{ coin_status: coin_status.clone() }
             }
-        }
-        Some(Err(err_val)) => {
-            rsx! {
-                div {
-                    "Coin Status: "
-                    { err_val.to_string() }
-                }
+            div {
+                ShowCoinStatus{ coin_status: coin_result().clone() }
             }
-        }
-        None => {
-            rsx! {
-                div {
-                    "Coin Status: None"
-                }
-            }
-        }
+        }        
     }
 }
 #[component]
