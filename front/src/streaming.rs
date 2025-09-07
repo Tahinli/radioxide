@@ -7,7 +7,6 @@ use futures_util::StreamExt;
 use ringbuf::{HeapRb, Producer, SharedRb};
 use std::{io::Write, mem::MaybeUninit, sync::Arc};
 
-
 use crate::{listening::listen_podcast, BUFFER_LENGTH};
 
 pub async fn start_listening(
@@ -17,13 +16,9 @@ pub async fn start_listening(
     if is_listening() {
         log::info!("Trying Sir");
         let connect_addr = "ws://192.168.1.2:2424";
-        
+
         let ws_stream: tokio_tungstenite_wasm::WebSocketStream;
-        match tokio_tungstenite_wasm::connect(
-            connect_addr,
-        )
-        .await
-        {
+        match tokio_tungstenite_wasm::connect(connect_addr).await {
             Ok(ws_stream_connected) => ws_stream = ws_stream_connected,
             Err(_) => {
                 is_listening.set(false);
@@ -67,10 +62,10 @@ pub async fn sound_stream(
                 log::error!("Error: Decompression | {}", err_val);
             }
             let uncompressed_data = match decompression_writer.into_inner() {
-                Ok(healty_packet) => healty_packet,
-                Err(unhealty_packet) => {
-                    log::warn!("Warning: Unhealty Packet | {}", unhealty_packet.len());
-                    unhealty_packet
+                Ok(healthy_packet) => healthy_packet,
+                Err(unhealthy_packet) => {
+                    log::warn!("Warning: Unhealthy Packet | {}", unhealthy_packet.len());
+                    unhealthy_packet
                 }
             };
             log::info!("{}", uncompressed_data.len());
