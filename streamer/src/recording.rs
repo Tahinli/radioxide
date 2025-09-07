@@ -1,7 +1,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use tokio::sync::broadcast::Sender;
 
-pub async fn recording(sound_stream_producer: Sender<f32>) {
+pub async fn record(sound_stream_producer: Sender<f32>) {
     let host = cpal::default_host();
     let input_device = host.default_input_device().unwrap();
 

@@ -64,8 +64,9 @@ pub async fn start(relay_configs: Config) {
             ip: "127.0.0.1".to_string().parse().unwrap(),
             port: 0000,
         };
-        let mut is_streaming = false;
+        let mut is_streaming;
         loop {
+            is_streaming = false;
             match streamer_socket.accept().await {
                 Ok((streamer_tcp, streamer_info)) => {
                     new_streamer.ip = streamer_info.ip();
@@ -258,7 +259,9 @@ async fn status_checker(
                 let cleaning_timer = Instant::now();
                 message_organizer_task.as_ref().unwrap().abort();
                 buffer_layer_task.as_ref().unwrap().abort();
-                listener_socket_killer_producer.send(true).unwrap();
+                if let Err(_) = listener_socket_killer_producer.send(true) {
+                    eprintln!("Error: Cleaning | Socket Kill Failed, Receiver Dropped");
+                }
                 let mut listener_task_counter = 0;
                 while listener_stream_tasks_receiver.len() > 0 {
                     match listener_stream_tasks_receiver.recv().await {
