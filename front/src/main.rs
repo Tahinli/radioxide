@@ -75,6 +75,15 @@ async fn coin_status_check() -> Result<CoinStatus, reqwest::Error> {
 fn app() -> Element {
     rsx! {
         page_base {}
+        div {
+            audio{  
+                    src:"https://radioxide.tahinli.com.tr/audios/music.opus",
+                    controls:true, 
+                    autoplay: true,
+                    muted:false,
+                    r#loop:true,
+            }
+        }
         coin_status_renderer {}
         server_status_renderer {}
     }
