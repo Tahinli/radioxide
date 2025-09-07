@@ -1,7 +1,7 @@
+pub mod gui;
 pub mod recording;
 pub mod streaming;
 pub mod utils;
-pub mod gui;
 
 pub const BUFFER_LENGTH: usize = 1000000;
 
