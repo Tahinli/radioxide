@@ -21,6 +21,7 @@ pub async fn connect(
     streamer_config: Config,
     mut base_to_streaming: Receiver<bool>,
     streaming_to_base: Sender<bool>,
+    streaming_to_base_sender_is_finished: Sender<bool>,
     microphone_stream_volume: Arc<Mutex<f32>>,
     audio_stream_volume: Arc<Mutex<f32>>,
 ) {
@@ -83,6 +84,7 @@ pub async fn connect(
             mixer_task,
             base_to_streaming,
             streaming_to_base,
+            streaming_to_base_sender_is_finished,
         ));
     }
 }
@@ -254,15 +256,45 @@ async fn status_checker(
     mixer_task: JoinHandle<()>,
     mut base_to_streaming: Receiver<bool>,
     streaming_to_base: Sender<bool>,
+    streaming_to_base_sender_is_finished: Sender<bool>,
 ) {
-    while let Err(_) = base_to_streaming.try_recv() {
+    let mut problem = false;
+    loop {
+        if let Ok(_) = base_to_streaming.try_recv() {
+            println!("Time to Retrieve");
+            break;
+        }
+        if stream_task.is_finished() {
+            println!("Warning: Stream Task Finished");
+            problem = true;
+            break;
+        }
+        if mixer_task.is_finished() {
+            println!("Warning: Mixer Task Finished");
+            problem = true;
+            break;
+        }
+        if message_organizer_task.is_finished() {
+            println!("Warning: Message Organizer Task Finished");
+            problem = true;
+            break;
+        }
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
     stream_task.abort();
     mixer_task.abort();
     message_organizer_task.abort();
-    match streaming_to_base.send(true) {
-        Ok(_) => println!("Cleaning Done: Streamer Disconnected"),
-        Err(err_val) => eprintln!("Error: Cleaning | {}", err_val),
+    if problem {
+        println!("Problem");
+        match streaming_to_base_sender_is_finished.send(true) {
+            Ok(_) => println!("Cleaning Done: Streamer Disconnected"),
+            Err(err_val) => eprintln!("Error: Cleaning | Is Finished | {}", err_val),
+        }
+    } else {
+        println!("No Problem");
+        match streaming_to_base.send(true) {
+            Ok(_) => println!("Cleaning Done: Streamer Disconnected"),
+            Err(err_val) => eprintln!("Error: Cleaning | Is Stopped | {}", err_val),
+        }
     }
 }
