@@ -756,7 +756,7 @@ impl Streamer {
         .height(Length::Fill);
         container(content)
             .height(Length::Fill)
-            .center_x()
+            .center_x(Length::Fill)
             .align_y(alignment::Vertical::Top)
     }
     pub fn subscription(&self) -> Subscription<Message> {
