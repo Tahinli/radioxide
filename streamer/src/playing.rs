@@ -1,4 +1,8 @@
-use std::{fs::File, sync::Arc};
+use std::{
+    fs::File,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rubato::{
@@ -6,17 +10,14 @@ use rubato::{
 };
 use symphonia::core::{
     audio::{AudioBufferRef, Signal},
-    codecs::{DecoderOptions, CODEC_TYPE_NULL},
-    formats::FormatOptions,
+    codecs::{Decoder, DecoderOptions, CODEC_TYPE_NULL},
+    formats::{FormatOptions, FormatReader},
     io::MediaSourceStream,
     meta::MetadataOptions,
     probe::Hint,
 };
 use tokio::{
-    sync::{
-        broadcast::{Receiver, Sender},
-        Mutex,
-    },
+    sync::broadcast::{Receiver, Sender},
     task,
 };
 
@@ -37,30 +38,20 @@ pub async fn play(
 
     let output_device_sample_rate = output_device_config.sample_rate.0;
 
-    let (mut audio_resampled_left, mut audio_resampled_right) =
-        match decode_audio(output_device_sample_rate, file) {
-            Some((left, right)) => (left, right),
-            None => {
-                let_the_base_know(playing_to_base_sender, Player::Stop).await;
-                return;
-            }
-        };
-
     let mut decoded_to_playing_receiver = decoded_to_playing_sender.subscribe();
-    for _ in 0..audio_resampled_left.clone().len() {
-        decoded_to_playing_sender
-            .send(audio_resampled_left.pop().unwrap() as f32)
-            .unwrap();
-        decoded_to_playing_sender
-            .send(audio_resampled_right.pop().unwrap() as f32)
-            .unwrap();
+    let audio_process_task = tokio::spawn(process_audio(
+        output_device_sample_rate,
+        file,
+        decoded_to_playing_sender,
+    ));
+    while decoded_to_playing_receiver.is_empty() {
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
-
     let output_data_fn = move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
         for sample in data {
             if decoded_to_playing_receiver.len() > 0 {
                 let single = match decoded_to_playing_receiver.blocking_recv() {
-                    Ok(single) => single * *audio_volume.blocking_lock(),
+                    Ok(single) => single * *audio_volume.lock().unwrap(),
                     Err(_) => 0.0,
                 };
                 if audio_stream_sender.receiver_count() > 0 {
@@ -101,9 +92,19 @@ pub async fn play(
                     //todo when pause error, do software level stop
                     Err(_) => todo!(),
                 },
-                Player::Stop => break,
+                Player::Stop => {
+                    if !audio_process_task.is_finished() {
+                        audio_process_task.abort();
+                    }
+                    break;
+                }
             },
-            Err(_) => break,
+            Err(_) => {
+                if !audio_process_task.is_finished() {
+                    audio_process_task.abort();
+                }
+                break;
+            }
         }
     });
     drop(output_stream);
@@ -116,9 +117,56 @@ fn err_fn(err: cpal::StreamError) {
 async fn let_the_base_know(playing_to_base_sender: Sender<Player>, action: Player) {
     let _ = playing_to_base_sender.send(action);
 }
-fn decode_audio(output_device_sample_rate: u32, file: File) -> Option<(Vec<f64>, Vec<f64>)> {
+
+fn decode_audio(
+    format: &mut Box<dyn FormatReader>,
+    track_id: u32,
+    decoder: &mut Box<dyn Decoder>,
+) -> Option<(Vec<f64>, Vec<f64>)> {
     let mut audio_decoded_left = vec![];
     let mut audio_decoded_right = vec![];
+    let packet = match format.next_packet() {
+        Ok(packet) => packet,
+        Err(_) => return None,
+    };
+
+    while !format.metadata().is_latest() {
+        format.metadata().pop();
+    }
+
+    if packet.track_id() != track_id {
+        return None;
+    }
+
+    if let Ok(decoded) = decoder.decode(&packet) {
+        if let AudioBufferRef::F32(buf) = decoded {
+            for (left, right) in buf.chan(0).iter().zip(buf.chan(1).iter()) {
+                audio_decoded_left.push(*left as f64);
+                audio_decoded_right.push(*right as f64);
+            }
+        }
+    }
+    Some((audio_decoded_left, audio_decoded_right))
+}
+
+fn resample_audio(
+    audio_decoded_left: Vec<f64>,
+    audio_decoded_right: Vec<f64>,
+    resampler: &mut SincFixedIn<f64>,
+) -> (Vec<f64>, Vec<f64>) {
+    let audio_decoded_channels_combined = vec![audio_decoded_left, audio_decoded_right];
+    let audio_resampled = resampler
+        .process(&audio_decoded_channels_combined, None)
+        .unwrap();
+
+    (audio_resampled[0].clone(), audio_resampled[1].clone())
+}
+
+async fn process_audio(
+    output_device_sample_rate: u32,
+    file: File,
+    decoded_to_playing_sender: tokio::sync::broadcast::Sender<f32>,
+) {
     let media_source_stream = MediaSourceStream::new(Box::new(file), Default::default());
 
     let hint = Hint::new();
@@ -135,7 +183,7 @@ fn decode_audio(output_device_sample_rate: u32, file: File) -> Option<(Vec<f64>,
 
     match probed {
         Ok(probed_safe) => probed = Ok(probed_safe),
-        Err(_) => return None,
+        Err(_) => return,
     }
 
     let mut format = probed.unwrap().format;
@@ -147,7 +195,6 @@ fn decode_audio(output_device_sample_rate: u32, file: File) -> Option<(Vec<f64>,
         .unwrap();
 
     let audio_sample_rate = track.codec_params.sample_rate.unwrap();
-
     DecoderOptions::default();
     let decoder_options = DecoderOptions::default();
     let mut decoder = symphonia::default::get_codecs()
@@ -156,74 +203,50 @@ fn decode_audio(output_device_sample_rate: u32, file: File) -> Option<(Vec<f64>,
 
     let track_id = track.id;
 
-    loop {
-        let packet = match format.next_packet() {
-            Ok(packet) => packet,
-            Err(_) => {
-                break;
-            }
-        };
-
-        while !format.metadata().is_latest() {
-            format.metadata().pop();
-        }
-
-        if packet.track_id() != track_id {
-            continue;
-        }
-
-        match decoder.decode(&packet) {
-            Ok(decoded) => match decoded {
-                AudioBufferRef::F32(buf) => {
-                    for (left, right) in buf.chan(0).iter().zip(buf.chan(1).iter()) {
-                        audio_decoded_left.push(*left as f64);
-                        audio_decoded_right.push(*right as f64);
-                    }
-                }
-                _ => {}
-            },
-            Err(_) => {
-                //eprintln!("Error: Sample Decode | {}", err_val);
-                println!("End ?");
-            }
-        }
-    }
-
     let params = SincInterpolationParameters {
         sinc_len: 256,
         f_cutoff: 0.95,
         interpolation: SincInterpolationType::Linear,
-        oversampling_factor: 256,
+        oversampling_factor: 128,
         window: WindowFunction::BlackmanHarris2,
     };
+
+    let chunk_size = match decode_audio(&mut format, track_id, &mut decoder) {
+        Some((audio_decoded_left_channel, _)) => audio_decoded_left_channel.len(),
+        None => return,
+    };
+
     let mut resampler = SincFixedIn::<f64>::new(
         output_device_sample_rate as f64 / audio_sample_rate as f64,
         2.0,
         params,
-        audio_decoded_left.len(),
+        chunk_size,
         2,
     )
     .unwrap();
 
-    let audio_decoded_channes_combined =
-        vec![audio_decoded_left.clone(), audio_decoded_right.clone()];
-    let audio_resampled = resampler
-        .process(&audio_decoded_channes_combined, None)
-        .unwrap();
+    loop {
+        let (mut audio_decoded_left, mut audio_decoded_right) = (vec![], vec![]);
 
-    let mut audio_resampled_left = vec![];
-    let mut audio_resampled_right = vec![];
+        match decode_audio(&mut format, track_id, &mut decoder) {
+            Some((audio_decoded_left_channel, audio_decoded_right_channel)) => {
+                for (single_left, single_right) in audio_decoded_left_channel
+                    .iter()
+                    .zip(&audio_decoded_right_channel)
+                {
+                    audio_decoded_left.push(*single_left);
+                    audio_decoded_right.push(*single_right);
+                }
+            }
+            None => break,
+        };
 
-    for sample in &audio_resampled[0] {
-        audio_resampled_left.push(*sample);
+        let (audio_resampled_left, audio_resampled_right) =
+            resample_audio(audio_decoded_left, audio_decoded_right, &mut resampler);
+
+        for (single_left, single_right) in audio_resampled_left.iter().zip(&audio_resampled_right) {
+            let _ = decoded_to_playing_sender.send(*single_left as f32);
+            let _ = decoded_to_playing_sender.send(*single_right as f32);
+        }
     }
-
-    for sample in &audio_resampled[1] {
-        audio_resampled_right.push(*sample);
-    }
-
-    audio_resampled_left.reverse();
-    audio_resampled_right.reverse();
-
-    Some((audio_resampled_left, audio_resampled_right))
 }

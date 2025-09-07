@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use front::components::{coin_status_renderer, listen_renderer, server_status_renderer};
+use front::components::listen_renderer;
 
 fn main() {
     println!("Hello, world!");
@@ -8,7 +8,6 @@ fn main() {
 }
 
 fn app() -> Element {
-    let server_address = "https://tahinli.com.tr:2323".to_string();
     rsx! {
         page_base {}
         listen_renderer {}

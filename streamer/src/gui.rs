@@ -1,14 +1,18 @@
-use std::{cmp::max, fs::File, path::Path, sync::Arc};
+use std::{
+    cmp::max,
+    fs::File,
+    path::Path,
+    process::exit,
+    sync::{Arc, Mutex},
+};
 
 use iced::{
     alignment,
     widget::{column, container, row, scrollable, slider, text::LineHeight, Container, Rule},
-    window, Color, Command, Length, Subscription,
+    window::{self},
+    Color, Length, Subscription, Task,
 };
-use tokio::sync::{
-    broadcast::{channel, Receiver, Sender},
-    Mutex,
-};
+use tokio::sync::broadcast::{channel, Receiver, Sender};
 
 use crate::{
     gui_components::{button_with_centered_text, text_centered},
@@ -135,6 +139,52 @@ impl Default for Streamer {
 }
 
 impl Streamer {
+    pub fn new_with_load() -> (Self, Task<Message>) {
+        (
+            Self {
+                config: None,
+                data_channel: DataChannel {
+                    microphone_stream_sender: channel(BUFFER_LENGTH).0,
+                    audio_stream_sender: channel(BUFFER_LENGTH).0,
+                },
+                communication_channel: CommunicationChannel {
+                    base_to_streaming_sender: channel(1).0,
+                    streaming_to_base_sender: channel(1).0,
+                    streaming_to_base_is_finished: channel(1).0,
+                    base_to_recording_sender: channel(1).0,
+                    recording_to_base_sender: channel(1).0,
+                    base_to_playing_sender: channel(1).0,
+                    playing_to_base_sender: channel(1).0,
+                },
+                audio_miscellaneous: AudioMiscellaneous {
+                    file: None,
+                    selected_file_name: String::new(),
+                    playing_file_name: String::new(),
+                    files: None,
+                    decoded_to_playing_sender: None,
+                },
+                gui_status: GUIStatus {
+                    are_we_connect: Condition::Passive,
+                    are_we_record: Condition::Passive,
+                    are_we_play_audio: Condition::Passive,
+                    are_we_paused_audio: Condition::Passive,
+                    microphone_volume: ChangeableValue {
+                        value: Arc::new(1.0.into()),
+                    },
+                    audio_volume: ChangeableValue {
+                        value: Arc::new(1.0.into()),
+                    },
+                },
+            },
+            Task::perform(
+                async move {
+                    let config = get_config();
+                    Event::LoadConfig(config)
+                },
+                Message::Event,
+            ),
+        )
+    }
     fn new() -> Self {
         Self {
             config: None,
@@ -172,10 +222,10 @@ impl Streamer {
             },
         }
     }
-    pub fn update(&mut self, message: Message) -> Command<Message> {
+    pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Event(event) => match event {
-                Event::None => Command::none(),
+                Event::None => Task::none(),
                 Event::Connect => {
                     println!("Connect");
                     self.gui_status.are_we_connect = Condition::Loading;
@@ -206,7 +256,7 @@ impl Streamer {
                         .streaming_to_base_sender
                         .subscribe();
 
-                    let connect_command = Command::perform(
+                    let connect_command = Task::perform(
                         async move {
                             gui_utils::connect(
                                 microphone_stream_receiver,
@@ -223,7 +273,7 @@ impl Streamer {
                         Message::State,
                     );
 
-                    let is_streaming_finished_command = Command::perform(
+                    let is_streaming_finished_command = Task::perform(
                         async move {
                             gui_utils::is_streaming_finished(
                                 streaming_to_base_receiver_is_streaming_finished,
@@ -235,7 +285,7 @@ impl Streamer {
                     );
 
                     let commands = vec![connect_command, is_streaming_finished_command];
-                    Command::batch(commands)
+                    Task::batch(commands)
                 }
                 Event::Disconnect => {
                     println!("Disconnect");
@@ -248,7 +298,7 @@ impl Streamer {
                     let base_to_streaming_sender =
                         self.communication_channel.base_to_streaming_sender.clone();
 
-                    Command::perform(
+                    Task::perform(
                         async move {
                             gui_utils::disconnect(
                                 streaming_to_base_receiver,
@@ -272,7 +322,7 @@ impl Streamer {
                         .base_to_recording_sender
                         .subscribe();
 
-                    Command::perform(
+                    Task::perform(
                         async move {
                             gui_utils::start_recording(
                                 microphone_stream_sender,
@@ -293,7 +343,7 @@ impl Streamer {
                         .subscribe();
                     let base_to_recording_sender =
                         self.communication_channel.base_to_recording_sender.clone();
-                    Command::perform(
+                    Task::perform(
                         async move {
                             gui_utils::stop_recording(
                                 recording_to_base_receiver,
@@ -319,7 +369,7 @@ impl Streamer {
                             eprintln!("Error: Open File | {}", err_val);
                             self.audio_miscellaneous.file = None;
                             self.gui_status.are_we_play_audio = Condition::Passive;
-                            return Command::none();
+                            return Task::none();
                         }
                     }
                     self.audio_miscellaneous.decoded_to_playing_sender = Some(
@@ -379,7 +429,7 @@ impl Streamer {
 
                     let audio_volume = self.gui_status.audio_volume.value.clone();
 
-                    let playing_command = Command::perform(
+                    let playing_command = Task::perform(
                         async move {
                             gui_utils::start_playing(
                                 audio_stream_sender,
@@ -393,7 +443,7 @@ impl Streamer {
                         },
                         Message::State,
                     );
-                    let is_finished_command = Command::perform(
+                    let is_finished_command = Task::perform(
                         async move {
                             gui_utils::is_playing_finished(
                                 playing_to_base_receiver_is_audio_finished,
@@ -406,7 +456,7 @@ impl Streamer {
                         Message::State,
                     );
                     let commands = vec![playing_command, is_finished_command];
-                    Command::batch(commands)
+                    Task::batch(commands)
                 }
                 Event::StopAudio => {
                     println!("Stop Audio");
@@ -419,7 +469,7 @@ impl Streamer {
                     let base_to_playing_sender =
                         self.communication_channel.base_to_playing_sender.clone();
 
-                    Command::perform(
+                    Task::perform(
                         async move {
                             gui_utils::stop_playing(
                                 playing_to_base_receiver,
@@ -441,7 +491,7 @@ impl Streamer {
                     let base_to_playing_sender =
                         self.communication_channel.base_to_playing_sender.clone();
 
-                    Command::perform(
+                    Task::perform(
                         async move {
                             gui_utils::pause_playing(
                                 playing_to_base_receiver,
@@ -463,7 +513,7 @@ impl Streamer {
                     let base_to_playing_sender =
                         self.communication_channel.base_to_playing_sender.clone();
 
-                    Command::perform(
+                    Task::perform(
                         async move {
                             gui_utils::continue_playing(
                                 playing_to_base_receiver,
@@ -486,117 +536,110 @@ impl Streamer {
                             self.audio_miscellaneous.file = None;
                         }
                     }
-                    Command::none()
+                    Task::none()
                 }
                 Event::ChangeMicrophoneVolume(value) => {
-                    *self.gui_status.microphone_volume.value.blocking_lock() = value;
+                    // let microphone_volume = self.gui_status.microphone_volume.value.clone();
+                    //*self.gui_status.microphone_volume.value.blocking_lock() = value;
                     let microphone_volume = self.gui_status.microphone_volume.value.clone();
-                    Command::perform(
+                    Task::perform(
                         async move { change_microphone_volume(value, microphone_volume).await },
                         Message::State,
                     )
                 }
                 Event::ChangeAudioVolume(value) => {
-                    *self.gui_status.audio_volume.value.blocking_lock() = value;
+                    // *self.gui_status.audio_volume.value.blocking_lock() = value;
                     let audio_volume = self.gui_status.audio_volume.value.clone();
-                    Command::perform(
+                    Task::perform(
                         async move { change_audio_volume(value, audio_volume).await },
                         Message::State,
                     )
                 }
                 Event::LoadConfig(config) => {
                     self.config = Some(config);
-                    Command::none()
+                    Task::none()
                 }
                 Event::ListFiles(files) => {
                     self.audio_miscellaneous.files = files;
-                    Command::none()
+                    Task::none()
                 }
                 Event::IcedEvent(iced_event) => match iced_event {
-                    iced::Event::Keyboard(_) => Command::perform(
+                    iced::Event::Keyboard(_) => Task::perform(
                         async move {
                             let files = gui_utils::list_files(Path::new(AUDIOS_PATH)).await;
                             Event::ListFiles(files)
                         },
                         Message::Event,
                     ),
-                    iced::Event::Mouse(_) => Command::perform(
+                    iced::Event::Mouse(_) => Task::perform(
                         async move {
                             let files = gui_utils::list_files(Path::new(AUDIOS_PATH)).await;
                             Event::ListFiles(files)
                         },
                         Message::Event,
                     ),
-                    iced::Event::Window(id, window_event) => {
-                        if let window::Event::CloseRequested = window_event {
-                            self.exit(id)
-                        } else {
-                            Command::perform(
-                                async move {
-                                    let files = gui_utils::list_files(Path::new(AUDIOS_PATH)).await;
-                                    Event::ListFiles(files)
-                                },
-                                Message::Event,
-                            )
-                        }
-                    }
-                    iced::Event::Touch(_) => Command::perform(
+                    iced::Event::Touch(_) => Task::perform(
                         async move {
                             let files = gui_utils::list_files(Path::new(AUDIOS_PATH)).await;
                             Event::ListFiles(files)
                         },
                         Message::Event,
                     ),
-                    iced::Event::PlatformSpecific(_) => Command::perform(
-                        async move {
-                            let files = gui_utils::list_files(Path::new(AUDIOS_PATH)).await;
-                            Event::ListFiles(files)
+                    iced::Event::Window(windows_event) => Task::perform(
+                        {
+                            if let window::Event::CloseRequested = windows_event {
+                                self.exit();
+                            }
+                            async move {
+                                let files = gui_utils::list_files(Path::new(AUDIOS_PATH)).await;
+                                Event::ListFiles(files)
+                            }
                         },
                         Message::Event,
                     ),
                 },
-                Event::CloseWindow(id) => window::close(id),
+                Event::CloseWindow(_) => self.exit(),
             },
             Message::State(state) => match state {
-                State::None => Command::none(),
+                State::None => Task::none(),
                 State::Connected => {
                     self.gui_status.are_we_connect = Condition::Active;
-                    Command::none()
+                    Task::none()
                 }
                 State::Disconnected => {
                     self.gui_status.are_we_connect = Condition::Passive;
-                    Command::none()
+                    Task::none()
                 }
                 State::Recording => {
                     self.gui_status.are_we_record = Condition::Active;
-                    Command::none()
+                    Task::none()
                 }
                 State::StopRecording => {
                     self.gui_status.are_we_record = Condition::Passive;
-                    Command::none()
+                    Task::none()
                 }
                 State::PlayingAudio => {
                     self.audio_miscellaneous.playing_file_name =
                         self.audio_miscellaneous.selected_file_name.clone();
                     self.gui_status.are_we_play_audio = Condition::Active;
                     self.gui_status.are_we_paused_audio = Condition::Passive;
-                    Command::none()
+                    Task::none()
                 }
                 State::StopAudio => {
                     self.audio_miscellaneous.playing_file_name = String::new();
                     self.gui_status.are_we_play_audio = Condition::Passive;
-                    Command::none()
+                    Task::none()
                 }
                 State::PausedAudio => {
                     self.gui_status.are_we_paused_audio = Condition::Active;
-                    Command::none()
+                    Task::none()
                 }
                 State::ContinuedAudio => {
                     self.gui_status.are_we_paused_audio = Condition::Passive;
-                    Command::none()
+                    Task::none()
                 }
-                State::MicrophoneVolumeChanged => Command::none(),
-                State::AudioVolumeChanged => Command::none(),
+                State::MicrophoneVolumeChanged => Task::none(),
+                State::AudioVolumeChanged => Task::none(),
             },
         }
     }
@@ -700,14 +743,14 @@ impl Streamer {
 
         let microphone_volume_slider = slider(
             0.0..=1.0,
-            *self.gui_status.microphone_volume.value.blocking_lock(),
+            *self.gui_status.microphone_volume.value.lock().unwrap(),
             |value| Message::Event(Event::ChangeMicrophoneVolume(value)),
         )
         .step(0.01);
 
         let audio_volume_slider = slider(
             0.0..=1.0,
-            *self.gui_status.audio_volume.value.blocking_lock(),
+            *self.gui_status.audio_volume.value.lock().unwrap(),
             |value| Message::Event(Event::ChangeAudioVolume(value)),
         )
         .step(0.01);
@@ -717,7 +760,7 @@ impl Streamer {
             None => 0,
         };
 
-        let longest_name_for_scrollable = match self.audio_miscellaneous.files.as_ref() {
+        let longest_audio_name = match self.audio_miscellaneous.files.as_ref() {
             Some(audio_files) => {
                 let mut longest = 0;
                 for audio_file in audio_files {
@@ -733,7 +776,7 @@ impl Streamer {
         let mut audio_scrollable_content = column![]
             .spacing(1)
             .height(audio_file_size_for_scrollable)
-            .width(longest_name_for_scrollable);
+            .width(longest_audio_name);
         let audio_selected = text_centered(format!(
             "Selected: {}",
             self.audio_miscellaneous.selected_file_name.clone()
@@ -750,10 +793,10 @@ impl Streamer {
                     audio_scrollable_content.push(button.height(AUDIO_SCROLLABLE_BUTTON_SIZE));
             }
         }
-        let audios_scrollable = scrollable(audio_scrollable_content)
-            .height(200)
-            .width(longest_name_for_scrollable);
-        let audio_info_content = column![audio_selected, audio_playing,].height(60);
+        let audios_scrollable = scrollable(audio_scrollable_content).height(200).width(350);
+        let audio_info_content = column![audio_selected, audio_playing,]
+            .height(100)
+            .width(longest_audio_name);
         let header_content = row![header].width(350).height(50);
         let text_content = row![
             connection_text,
@@ -817,17 +860,17 @@ impl Streamer {
             .map(Event::IcedEvent)
             .map(Message::Event)
     }
-    pub fn load_config() -> Command<Message> {
-        Command::perform(
+    pub fn load_config() -> Task<Message> {
+        Task::perform(
             async move {
-                let config = get_config().await;
+                let config = get_config();
                 Event::LoadConfig(config)
             },
             Message::Event,
         )
     }
-    pub fn list_files() -> Command<Message> {
-        Command::perform(
+    pub fn list_files() -> Task<Message> {
+        Task::perform(
             async move {
                 let files = gui_utils::list_files(Path::new(AUDIOS_PATH)).await;
                 Event::ListFiles(files)
@@ -843,27 +886,22 @@ impl Streamer {
         playing_to_base_receiver: Receiver<Player>,
         base_to_playing_sender: Sender<Player>,
         features_in_need: Features,
-        window_id: window::Id,
-    ) -> Command<Message> {
-        Command::perform(
-            async move {
-                if features_in_need.stream {
-                    gui_utils::disconnect(streaming_to_base_receiver, base_to_streaming_sender)
-                        .await;
-                }
-                if features_in_need.record {
-                    gui_utils::stop_recording(recording_to_base_receiver, base_to_recording_sender)
-                        .await;
-                }
-                if features_in_need.play_audio {
-                    gui_utils::stop_playing(playing_to_base_receiver, base_to_playing_sender).await;
-                }
-                Event::CloseWindow(window_id)
-            },
-            Message::Event,
-        )
+    ) -> Task<Message> {
+        tokio::spawn(async move {
+            if features_in_need.stream {
+                gui_utils::disconnect(streaming_to_base_receiver, base_to_streaming_sender).await;
+            }
+            if features_in_need.record {
+                gui_utils::stop_recording(recording_to_base_receiver, base_to_recording_sender)
+                    .await;
+            }
+            if features_in_need.play_audio {
+                gui_utils::stop_playing(playing_to_base_receiver, base_to_playing_sender).await;
+            }
+        });
+        exit(1);
     }
-    fn exit(&self, window_id: window::Id) -> Command<Message> {
+    fn exit(&self) -> Task<Message> {
         let mut features_in_need = Features {
             stream: false,
             record: false,
@@ -905,7 +943,6 @@ impl Streamer {
             playing_to_base_receiver,
             base_to_playing_sender,
             features_in_need,
-            window_id,
         )
     }
 }
