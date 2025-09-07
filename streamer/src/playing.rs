@@ -1,7 +1,6 @@
 use std::fs::File;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use ringbuf::HeapRb;
 use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
@@ -20,6 +19,8 @@ use tokio::{
 
 pub async fn play(
     audio_stream_sender: Sender<f32>,
+    file: File,
+    decoded_to_playing_sender: Sender<f32>,
     playing_to_base_sender: Sender<bool>,
     mut base_to_playing_receiver: Receiver<bool>,
 ) {
@@ -31,28 +32,23 @@ pub async fn play(
     let output_device_sample_rate = output_device_config.sample_rate.0;
 
     let (mut audio_resampled_left, mut audio_resampled_right) =
-        decode_audio(output_device_sample_rate);
+        decode_audio(output_device_sample_rate, file);
 
-    let total_ring_len = audio_resampled_left.len() + audio_resampled_right.len();
-    let (mut producer, mut receiver) = HeapRb::<f32>::new(total_ring_len).split();
-
+    let mut decoded_to_playing_receiver = decoded_to_playing_sender.subscribe();
     for _ in 0..audio_resampled_left.clone().len() {
-        producer
-            .push(audio_resampled_left.pop().unwrap() as f32)
+        decoded_to_playing_sender
+            .send(audio_resampled_left.pop().unwrap() as f32)
             .unwrap();
-        producer
-            .push(audio_resampled_right.pop().unwrap() as f32)
+        decoded_to_playing_sender
+            .send(audio_resampled_right.pop().unwrap() as f32)
             .unwrap();
     }
 
     let output_data_fn = move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
         for sample in data {
-            let single = match receiver.pop() {
-                Some(single) => {
-                    //println!("{}", single);
-                    single
-                }
-                None => 0.0,
+            let single = match decoded_to_playing_receiver.blocking_recv() {
+                Ok(single) => single,
+                Err(_) => 0.0,
             };
             if audio_stream_sender.receiver_count() > 0 {
                 let _ = audio_stream_sender.send(single);
@@ -71,7 +67,6 @@ pub async fn play(
     task::block_in_place(|| {
         let _ = base_to_playing_receiver.blocking_recv();
     });
-    output_stream.pause().unwrap();
     drop(output_stream);
     tokio::spawn(let_the_base_know(playing_to_base_sender));
 }
@@ -82,9 +77,7 @@ fn err_fn(err: cpal::StreamError) {
 async fn let_the_base_know(playing_to_base_sender: Sender<bool>) {
     let _ = playing_to_base_sender.send(true);
 }
-fn decode_audio(output_device_sample_rate: u32) -> (Vec<f64>, Vec<f64>) {
-    let file = File::open("music.mp3").unwrap();
-
+fn decode_audio(output_device_sample_rate: u32, file: File) -> (Vec<f64>, Vec<f64>) {
     let mut audio_decoded_left = vec![];
     let mut audio_decoded_right = vec![];
     let media_source_stream = MediaSourceStream::new(Box::new(file), Default::default());
