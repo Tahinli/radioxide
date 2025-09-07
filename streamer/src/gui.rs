@@ -381,7 +381,7 @@ impl Streamer {
                                 .metadata()
                                 .unwrap()
                                 .len() as usize
-                                * 4,
+                                * 10,
                             1,
                         ))
                         .0,
