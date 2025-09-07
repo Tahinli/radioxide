@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 pub mod routing;
-pub mod read;
 
 #[derive(Debug, Clone)]
 pub struct AppState{
