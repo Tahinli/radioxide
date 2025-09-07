@@ -1,10 +1,27 @@
-use std::time::Duration;
+use std::{
+    fs::File,
+    io::{self, BufReader},
+    sync::Arc,
+    time::Duration,
+};
 
 use futures_util::{SinkExt, StreamExt};
+use rustls_pemfile::{certs, pkcs8_private_keys, private_key, rsa_private_keys};
+
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::broadcast::{channel, Receiver, Sender},
     time::Instant,
+};
+use tokio_rustls::{
+    rustls::{
+        client::danger::DangerousClientConfig,
+        internal::msgs::handshake::CertificateChain,
+        pki_types::{CertificateDer, PrivateKeyDer},
+        ClientConfig,
+    },
+    server::TlsStream,
+    TlsAcceptor,
 };
 use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
 
@@ -19,10 +36,29 @@ pub async fn start() {
     let streamer_socket = TcpListener::bind("192.168.1.2:2525").await.unwrap();
     let timer = Instant::now();
 
+    let fullchain: io::Result<Vec<CertificateDer<'static>>> = certs(&mut BufReader::new(
+        File::open("certificates/fullchain.pem").unwrap(),
+    ))
+    .collect();
+    let fullchain = fullchain.unwrap();
+    let privkey: io::Result<PrivateKeyDer<'static>> = pkcs8_private_keys(&mut BufReader::new(
+        File::open("certificates/privkey.pem").unwrap(),
+    ))
+    .next()
+    .unwrap()
+    .map(Into::into);
+    let privkey = privkey.unwrap();
+
+    let config = tokio_rustls::rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(fullchain, privkey)
+        .unwrap();
+    let acceptor = TlsAcceptor::from(Arc::new(config));
     loop {
         match streamer_socket.accept().await {
             Ok((streamer_tcp, streamer_info)) => {
-                match tokio_tungstenite::accept_async(streamer_tcp).await {
+                let streamer_tcp_tls = acceptor.accept(streamer_tcp).await.unwrap();
+                match tokio_tungstenite::accept_async(streamer_tcp_tls).await {
                     Ok(ws_stream) => {
                         println!(
                             "New Streamer: {:#?} | {:#?}",
@@ -109,7 +145,7 @@ async fn buffer_layer(mut message_consumer: Receiver<Message>, buffered_producer
 async fn streamer_stream(
     streamer: Streamer,
     record_producer: Sender<Message>,
-    mut ws_stream: WebSocketStream<TcpStream>,
+    mut ws_stream: WebSocketStream<TlsStream<TcpStream>>,
     timer: Instant,
 ) {
     loop {
