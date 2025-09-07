@@ -1,28 +1,27 @@
-use std::{mem::MaybeUninit, sync::Arc, time::Duration};
+use std::time::Duration;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use futures_util::SinkExt;
-use ringbuf::{Consumer, HeapRb, Producer, SharedRb};
+use ringbuf::HeapRb;
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::broadcast::{channel, Receiver, Sender},
-    time::Instant,
 };
 use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
 
 use crate::Listener;
 
 const BUFFER_LENGTH: usize = 1000000;
-const MAX_TOLERATED_MESSAGE_COUNT:usize = 10;
+const MAX_TOLERATED_MESSAGE_COUNT: usize = 10;
 pub async fn start() {
     let socket = TcpListener::bind("192.168.1.2:2424").await.unwrap();
     println!("Dude Someone Triggered");
-    let ring = HeapRb::<f32>::new(BUFFER_LENGTH);
-    let (producer, consumer) = ring.split();
-    let timer = Instant::now();
+
+    let (record_producer, record_consumer) = channel(BUFFER_LENGTH);
+
     let (message_producer, _) = channel(BUFFER_LENGTH);
-    tokio::spawn(record(producer));
-    tokio::spawn(parent_stream(timer, message_producer.clone(), consumer));
+    tokio::spawn(record(record_producer));
+    tokio::spawn(message_organizer(message_producer.clone(), record_consumer));
     while let Ok((tcp_stream, info)) = socket.accept().await {
         let ws_stream = tokio_tungstenite::accept_async(tcp_stream).await.unwrap();
         println!("New Connection: {}", info);
@@ -37,18 +36,15 @@ pub async fn start() {
         ));
     }
 }
-pub async fn parent_stream(
-    timer: Instant,
-    message_producer: Sender<Message>,
-    mut consumer: Consumer<f32, Arc<SharedRb<f32, Vec<MaybeUninit<f32>>>>>,
-) {
+async fn message_organizer(message_producer: Sender<Message>, mut consumer: Receiver<f32>) {
     loop {
         let mut single_message: Vec<u8> = Vec::new();
-        let now = timer.elapsed().as_secs();
-        while !consumer.is_empty() && (timer.elapsed().as_secs() + 5) > now {
-            match consumer.pop() {
-                Some(single_data) => {
-                    let ring = HeapRb::<u8>::new(1000000);
+        let mut iteration = consumer.len();
+        while iteration > 0 {
+            iteration -= 1;
+            match consumer.recv().await {
+                Ok(single_data) => {
+                    let ring = HeapRb::<u8>::new(BUFFER_LENGTH);
                     let (mut producer, mut consumer) = ring.split();
                     let single_data_packet = single_data.to_string().as_bytes().to_vec();
                     let terminator = "#".as_bytes().to_vec();
@@ -63,22 +59,24 @@ pub async fn parent_stream(
                         single_message.push(consumer.pop().unwrap());
                     }
                 }
-                None => {}
+                Err(_) => {}
             }
         }
-        match message_producer.send(single_message.into()) {
-            Ok(_) => {}
-            Err(_) => {}
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        if !single_message.is_empty() {
+            match message_producer.send(single_message.into()) {
+                Ok(_) => {}
+                Err(_) => {}
+            }
+            println!(
+                "Message Counter = {} | Receiver Count = {}",
+                message_producer.len(),
+                message_producer.receiver_count()
+            );
         }
-        println!(
-            "Message Len = {} | Receiver Count = {}",
-            message_producer.len(),
-            message_producer.receiver_count()
-        );
-        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
-pub async fn stream(
+async fn stream(
     listener: Listener,
     mut ws_stream: WebSocketStream<TcpStream>,
     mut message_consumer: Receiver<Message>,
@@ -112,7 +110,7 @@ pub async fn stream(
     }
 }
 
-pub async fn record(mut producer: Producer<f32, Arc<SharedRb<f32, Vec<MaybeUninit<f32>>>>>) {
+async fn record(producer: Sender<f32>) {
     println!("Hello, world!");
     let host = cpal::default_host();
     let input_device = host.default_input_device().unwrap();
@@ -123,7 +121,7 @@ pub async fn record(mut producer: Producer<f32, Arc<SharedRb<f32, Vec<MaybeUnini
 
     let input_data_fn = move |data: &[f32], _: &cpal::InputCallbackInfo| {
         for &sample in data {
-            match producer.push(sample) {
+            match producer.send(sample) {
                 Ok(_) => {}
                 Err(_) => {}
             }

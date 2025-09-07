@@ -5,7 +5,7 @@ use dioxus::{
     prelude::spawn,
     signals::{Signal, Writable},
 };
-use futures_util::StreamExt;
+use futures_util::{stream::SplitStream, SinkExt, StreamExt};
 
 use ringbuf::{Consumer, HeapRb, Producer, SharedRb};
 use tokio_tungstenite_wasm::WebSocketStream;
@@ -20,9 +20,9 @@ pub async fn start_listening(
     if is_listening() {
         log::info!("Trying Sir");
         let connect_addr = "ws://192.168.1.2:2424";
-        let stream: WebSocketStream;
+        let (mut stream_producer, stream_consumer);
         match tokio_tungstenite_wasm::connect(connect_addr).await {
-            Ok(ws_stream) => stream = ws_stream,
+            Ok(ws_stream) => (stream_producer, stream_consumer) = ws_stream.split(),
             Err(_) => {
                 is_listening.set(false);
                 return;
@@ -33,7 +33,7 @@ pub async fn start_listening(
         let (producer, consumer) = ring.split();
         spawn({
             async move {
-                sound_stream(is_listening, stream, producer).await;
+                sound_stream(is_listening, stream_consumer, producer).await;
                 is_listening.set(false);
                 is_maintaining.set((false, is_maintaining().1));
             }
@@ -42,6 +42,8 @@ pub async fn start_listening(
             async move {
                 listen_podcast(is_listening, consumer).await;
                 is_listening.set(false);
+                //stream_producer.send("Disconnect ME".into()).await.unwrap();
+                stream_producer.close().await.unwrap();
                 //buffer time waiting actually
                 tokio_with_wasm::tokio::time::sleep(Duration::from_secs(2)).await;
                 log::info!("{:#?}", is_maintaining());
@@ -54,12 +56,12 @@ pub async fn start_listening(
 
 pub async fn sound_stream(
     is_listening: Signal<bool>,
-    mut stream: WebSocketStream,
+    mut stream_consumer: SplitStream<WebSocketStream>,
     mut producer: Producer<f32, Arc<SharedRb<f32, Vec<MaybeUninit<f32>>>>>,
 ) {
     log::info!("Attention! We need cables");
-
-    while let Some(msg) = stream.next().await {
+    
+    while let Some(msg) = stream_consumer.next().await {
         if is_listening() {
             let data = String::from_utf8(msg.unwrap().into()).unwrap();
             let data_parsed: Vec<&str> = data.split("#").collect();
