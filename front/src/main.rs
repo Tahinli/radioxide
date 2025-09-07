@@ -1,8 +1,5 @@
 use dioxus::prelude::*;
-use front::{
-    components::{coin_status_renderer, server_status_renderer},
-    streaming::start_listening,
-};
+use front::components::{coin_status_renderer, listen_renderer, server_status_renderer};
 
 fn main() {
     println!("Hello, world!");
@@ -14,13 +11,7 @@ fn app() -> Element {
     let server_address = "https://tahinli.com.tr:2323".to_string();
     rsx! {
         page_base {}
-        div {
-            button {
-                onclick: move |_| start_listening(),
-                "style":"width: 80px; height: 50px;",
-                "Listen"
-            }
-        }
+        listen_renderer {}
         coin_status_renderer {server_address:server_address.clone()}
         server_status_renderer {server_address:server_address.clone()}
     }
