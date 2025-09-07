@@ -1,94 +1,172 @@
 use std::time::Duration;
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use futures_util::SinkExt;
-use ringbuf::HeapRb;
+use futures_util::{SinkExt, StreamExt};
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::broadcast::{channel, Receiver, Sender},
+    time::Instant,
 };
 use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
 
-use crate::Listener;
+use crate::{Listener, Streamer};
 
 const BUFFER_LENGTH: usize = 1000000;
 const MAX_TOLERATED_MESSAGE_COUNT: usize = 10;
 pub async fn start() {
+    //need to move them for multi streamer
     let socket = TcpListener::bind("192.168.1.2:2424").await.unwrap();
-    println!("Dude Someone Triggered");
-
     let (record_producer, record_consumer) = channel(BUFFER_LENGTH);
+    let streamer_socket = TcpListener::bind("192.168.1.2:2525").await.unwrap();
+    let timer = Instant::now();
 
-    let (message_producer, _) = channel(BUFFER_LENGTH);
-    tokio::spawn(record(record_producer));
+    loop {
+        match streamer_socket.accept().await {
+            Ok((streamer_tcp, streamer_info)) => {
+                match tokio_tungstenite::accept_async(streamer_tcp).await {
+                    Ok(ws_stream) => {
+                        println!(
+                            "New Streamer: {:#?} | {:#?}",
+                            streamer_info,
+                            timer.elapsed()
+                        );
+                        let new_streamer = Streamer {
+                            ip: streamer_info.ip(),
+                            port: streamer_info.port(),
+                        };
+                        tokio::spawn(streamer_stream(
+                            new_streamer,
+                            record_producer,
+                            ws_stream,
+                            timer,
+                        ));
+                        break;
+                    }
+                    Err(err_val) => eprintln!("Error: TCP to WS Transform | {}", err_val),
+                }
+            }
+            Err(err_val) => eprintln!("Error: TCP Accept Connection | {}", err_val),
+        }
+    }
+    let (message_producer, message_consumer) = channel(BUFFER_LENGTH);
+    let (buffered_producer, _) = channel(BUFFER_LENGTH);
     tokio::spawn(message_organizer(message_producer.clone(), record_consumer));
-    while let Ok((tcp_stream, info)) = socket.accept().await {
+    tokio::spawn(buffer_layer(message_consumer, buffered_producer.clone()));
+    tokio::spawn(status_checker(buffered_producer.clone(), timer));
+    while let Ok((tcp_stream, listener_info)) = socket.accept().await {
         let ws_stream = tokio_tungstenite::accept_async(tcp_stream).await.unwrap();
-        println!("New Connection: {}", info);
+        println!("New Listener: {} | {:#?}", listener_info, timer.elapsed());
         let new_listener = Listener {
-            ip: info.ip(),
-            port: info.port(),
+            ip: listener_info.ip(),
+            port: listener_info.port(),
         };
         tokio::spawn(stream(
             new_listener,
             ws_stream,
-            message_producer.subscribe(),
+            buffered_producer.subscribe(),
         ));
     }
 }
-async fn message_organizer(message_producer: Sender<Message>, mut consumer: Receiver<f32>) {
+async fn status_checker(buffered_producer: Sender<Message>, timer: Instant) {
+    let mut listener_counter = buffered_producer.receiver_count();
+    let mut bottleneck_flag = false;
+    //let mut buffer_len = buffered_producer.len();
     loop {
-        let mut single_message: Vec<u8> = Vec::new();
-        let mut iteration = consumer.len();
-        while iteration > 0 {
-            iteration -= 1;
-            match consumer.recv().await {
-                Ok(single_data) => {
-                    let ring = HeapRb::<u8>::new(BUFFER_LENGTH);
-                    let (mut producer, mut consumer) = ring.split();
-                    let single_data_packet = single_data.to_string().as_bytes().to_vec();
-                    let terminator = "#".as_bytes().to_vec();
-
-                    for element in single_data_packet {
-                        producer.push(element).unwrap();
-                    }
-                    for element in terminator {
-                        producer.push(element).unwrap();
-                    }
-                    while !consumer.is_empty() {
-                        single_message.push(consumer.pop().unwrap());
-                    }
-                }
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        if buffered_producer.receiver_count() != 0 {
+            if buffered_producer.len() > 2 {
+                bottleneck_flag = true;
+                println!(
+                    "Bottleneck: {} | {:#?}",
+                    buffered_producer.len(),
+                    timer.elapsed()
+                );
+            }
+            if bottleneck_flag && buffered_producer.len() < 2 {
+                bottleneck_flag = false;
+                println!("Flawless Again");
+            }
+            if listener_counter != buffered_producer.receiver_count() {
+                listener_counter = buffered_producer.receiver_count();
+                println!("Listener(s): {}", listener_counter);
+            }
+        }
+    }
+}
+async fn buffer_layer(mut message_consumer: Receiver<Message>, buffered_producer: Sender<Message>) {
+    loop {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        while message_consumer.len() > 0 {
+            match message_consumer.recv().await {
+                Ok(message) => match buffered_producer.send(message) {
+                    Ok(_) => {}
+                    Err(_) => {}
+                },
                 Err(_) => {}
             }
         }
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        if !single_message.is_empty() {
-            match message_producer.send(single_message.into()) {
+    }
+}
+async fn streamer_stream(
+    streamer: Streamer,
+    record_producer: Sender<Message>,
+    mut ws_stream: WebSocketStream<TcpStream>,
+    timer: Instant,
+) {
+    loop {
+        match ws_stream.next().await {
+            Some(message_with_question) => {
+                match message_with_question {
+                    Ok(message) => {
+                        //println!("{}", message.len());
+                        match record_producer.send(message) {
+                            Ok(_) => {}
+                            Err(_) => {}
+                        }
+                    }
+                    Err(_) => {}
+                }
+            }
+            None => {
+                println!(
+                    "Streamer Disconnected: {} | {:#?}",
+                    format!("{}:{}", streamer.ip, streamer.port),
+                    timer.elapsed()
+                );
+                return;
+            }
+        }
+    }
+}
+
+async fn message_organizer(
+    message_producer: Sender<Message>,
+    mut record_consumer: Receiver<Message>,
+) {
+    loop {
+        match record_consumer.recv().await {
+            Ok(single_message) => match message_producer.send(single_message) {
                 Ok(_) => {}
                 Err(_) => {}
-            }
-            println!(
-                "Message Counter = {} | Receiver Count = {}",
-                message_producer.len(),
-                message_producer.receiver_count()
-            );
+            },
+            Err(_) => {}
         }
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 async fn stream(
     listener: Listener,
     mut ws_stream: WebSocketStream<TcpStream>,
-    mut message_consumer: Receiver<Message>,
+    mut buffered_consumer: Receiver<Message>,
 ) {
-    while let Ok(message) = message_consumer.recv().await {
-        if message_consumer.len() > MAX_TOLERATED_MESSAGE_COUNT {
+    while let Ok(message) = buffered_consumer.recv().await {
+        if buffered_consumer.len() > MAX_TOLERATED_MESSAGE_COUNT {
             println!(
                 "{} Forced to Disconnect | Reason -> Slow Consumer",
                 format!("{}:{}", listener.ip, listener.port)
             );
             break;
         }
+
         match ws_stream.send(message).await {
             Ok(_) => {
                 if let Err(_) = ws_stream.flush().await {
@@ -108,38 +186,4 @@ async fn stream(
             }
         }
     }
-}
-
-async fn record(producer: Sender<f32>) {
-    println!("Hello, world!");
-    let host = cpal::default_host();
-    let input_device = host.default_input_device().unwrap();
-
-    println!("Input Device: {}", input_device.name().unwrap());
-
-    let config: cpal::StreamConfig = input_device.default_input_config().unwrap().into();
-
-    let input_data_fn = move |data: &[f32], _: &cpal::InputCallbackInfo| {
-        for &sample in data {
-            match producer.send(sample) {
-                Ok(_) => {}
-                Err(_) => {}
-            }
-            //println!("{}", sample);
-        }
-    };
-
-    let input_stream = input_device
-        .build_input_stream(&config, input_data_fn, err_fn, None)
-        .unwrap();
-
-    println!("STREAMIN");
-    input_stream.play().unwrap();
-    //oneshot ile durdurabiliriz sanırım
-    std::thread::sleep(std::time::Duration::from_secs(10000000));
-    println!("DONE I HOPE");
-}
-
-fn err_fn(err: cpal::StreamError) {
-    eprintln!("Something Happened: {}", err);
 }
