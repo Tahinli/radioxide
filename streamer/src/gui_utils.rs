@@ -1,6 +1,9 @@
-use std::{fs::File, time::Duration};
+use std::{fs::File, sync::Arc, time::Duration};
 
-use tokio::sync::broadcast::{Receiver, Sender};
+use tokio::sync::{
+    broadcast::{Receiver, Sender},
+    Mutex,
+};
 
 use crate::{
     gui::{Player, State},
@@ -13,6 +16,8 @@ pub async fn connect(
     streamer_config: Config,
     streaming_to_base_sender: Sender<bool>,
     base_to_streaming_receiver: Receiver<bool>,
+    microphone_stream_volume: Arc<Mutex<f32>>,
+    audio_stream_volume: Arc<Mutex<f32>>,
 ) -> State {
     let mut streaming_to_base_receiver = streaming_to_base_sender.subscribe();
     tokio::spawn(streaming::connect(
@@ -21,6 +26,8 @@ pub async fn connect(
         streamer_config,
         base_to_streaming_receiver,
         streaming_to_base_sender.clone(),
+        microphone_stream_volume,
+        audio_stream_volume,
     ));
     let answer = streaming_to_base_receiver.recv().await;
     drop(streaming_to_base_receiver);
@@ -124,6 +131,7 @@ pub async fn start_playing(
     file: File,
     playing_to_base_sender: Sender<Player>,
     base_to_playing_receiver: Receiver<Player>,
+    audio_volume: Arc<Mutex<f32>>,
 ) -> State {
     let mut playing_to_base_receiver = playing_to_base_sender.subscribe();
     tokio::spawn(playing::play(
@@ -132,6 +140,7 @@ pub async fn start_playing(
         decoded_to_playing_sender,
         playing_to_base_sender,
         base_to_playing_receiver,
+        audio_volume,
     ));
     let answer = playing_to_base_receiver.recv().await;
     drop(playing_to_base_receiver);
@@ -290,4 +299,20 @@ pub async fn continue_playing(
             State::PausedAudio
         }
     }
+}
+
+pub async fn change_microphone_volume(
+    desired_value: f32,
+    microphone_stream_volume: Arc<Mutex<f32>>,
+) -> State {
+    *microphone_stream_volume.lock().await = desired_value;
+    State::MicrophoneVolumeChanged
+}
+
+pub async fn change_audio_volume(
+    desired_value: f32,
+    audio_stream_volume: Arc<Mutex<f32>>,
+) -> State {
+    *audio_stream_volume.lock().await = desired_value;
+    State::AudioVolumeChanged
 }

@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::{fs::File, sync::Arc};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rubato::{
@@ -13,7 +13,10 @@ use symphonia::core::{
     probe::Hint,
 };
 use tokio::{
-    sync::broadcast::{Receiver, Sender},
+    sync::{
+        broadcast::{Receiver, Sender},
+        Mutex,
+    },
     task,
 };
 
@@ -25,6 +28,7 @@ pub async fn play(
     decoded_to_playing_sender: Sender<f32>,
     playing_to_base_sender: Sender<Player>,
     mut base_to_playing_receiver: Receiver<Player>,
+    audio_volume: Arc<Mutex<f32>>,
 ) {
     let host = cpal::default_host();
     let output_device = host.default_output_device().unwrap();
@@ -50,7 +54,7 @@ pub async fn play(
         for sample in data {
             if decoded_to_playing_receiver.len() > 0 {
                 let single = match decoded_to_playing_receiver.blocking_recv() {
-                    Ok(single) => single,
+                    Ok(single) => single * *audio_volume.blocking_lock(),
                     Err(_) => 0.0,
                 };
                 if audio_stream_sender.receiver_count() > 0 {

@@ -4,7 +4,10 @@ use brotli::CompressorWriter;
 use futures_util::SinkExt;
 use ringbuf::HeapRb;
 use tokio::{
-    sync::broadcast::{channel, Receiver, Sender},
+    sync::{
+        broadcast::{channel, Receiver, Sender},
+        Mutex,
+    },
     task::JoinHandle,
 };
 use tokio_tungstenite::tungstenite::Message;
@@ -18,6 +21,8 @@ pub async fn connect(
     streamer_config: Config,
     mut base_to_streaming: Receiver<bool>,
     streaming_to_base: Sender<bool>,
+    microphone_stream_volume: Arc<Mutex<f32>>,
+    audio_stream_volume: Arc<Mutex<f32>>,
 ) {
     let connect_addr = match streamer_config.tls {
         true => format!("wss://{}", streamer_config.address),
@@ -59,6 +64,8 @@ pub async fn connect(
         let mixer_task = tokio::spawn(mixer(
             microphone_stream_receiver,
             audio_stream_receiver,
+            microphone_stream_volume,
+            audio_stream_volume,
             flow_sender,
             streamer_config.latency,
         ));
@@ -82,6 +89,8 @@ pub async fn connect(
 async fn mixer(
     mut microphone_stream_receiver: Receiver<f32>,
     mut audio_stream_receiver: Receiver<f32>,
+    microphone_stream_volume: Arc<Mutex<f32>>,
+    audio_stream_volume: Arc<Mutex<f32>>,
     flow_sender: Sender<f32>,
     latency: u16,
 ) {
@@ -120,13 +129,14 @@ async fn mixer(
         let mut flow = vec![];
 
         for element in microphone_stream {
-            flow.push(element * 0.5);
+            flow.push(element * (*microphone_stream_volume.lock().await));
         }
         for (i, element) in audio_stream.iter().enumerate() {
+            let audio_volumized = element * (*audio_stream_volume.lock().await);
             if flow.len() > i && flow.len() != 0 {
-                flow[i] = flow[i] + element * 0.5;
+                flow[i] = flow[i] + audio_volumized;
             } else {
-                flow.push(element * 0.5);
+                flow.push(audio_volumized);
             }
         }
         for element in flow {
