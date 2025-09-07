@@ -26,7 +26,7 @@ const BUFFER_LENGTH: usize = 1000000;
 const MAX_TOLERATED_MESSAGE_COUNT: usize = 10;
 pub async fn start(relay_configs: Config) {
     let timer = Instant::now();
-    let acceptor = tls_configurator().await;
+    let acceptor = None;
     loop {
         //need to move them for multi streamer
         let (record_producer, record_consumer) = channel(BUFFER_LENGTH);
@@ -54,6 +54,7 @@ pub async fn start(relay_configs: Config) {
                     timer.elapsed()
                 );
                 if relay_configs.tls {
+                    let acceptor = tls_configurator().await;
                     match acceptor.accept(streamer_tcp).await {
                         Ok(streamer_tcp_tls) => {
                             match tokio_tungstenite::accept_async(streamer_tcp_tls).await {
@@ -118,7 +119,6 @@ pub async fn start(relay_configs: Config) {
             let listener_handler_task = tokio::spawn(listener_handler(
                 listener_socket,
                 acceptor.clone(),
-                relay_configs.tls,
                 buffered_producer.clone(),
                 listener_stream_tasks_producer,
                 timer,
@@ -164,8 +164,7 @@ async fn tls_configurator() -> TlsAcceptor {
 }
 async fn listener_handler(
     listener_socket: TcpListener,
-    acceptor: TlsAcceptor,
-    is_tls: bool,
+    acceptor: Option<TlsAcceptor>,
     buffered_producer: Sender<Message>,
     listener_stream_tasks_producer: tokio::sync::mpsc::Sender<JoinHandle<()>>,
     timer: Instant,
@@ -179,51 +178,54 @@ async fn listener_handler(
                         ip: listener_info.ip(),
                         port: listener_info.port(),
                     };
-                    if is_tls {
-                        match acceptor.accept(tcp_stream).await {
-                            Ok(listener_tcp_tls) => {
-                                match tokio_tungstenite::accept_async(listener_tcp_tls).await {
-                                    Ok(wss_stream) => {
-                                        let listener_stream_task = tokio::spawn(stream(
-                                            new_listener,
-                                            wss_stream,
-                                            buffered_producer.subscribe(),
-                                        ));
-                                        let _ = listener_stream_tasks_producer
-                                            .send(listener_stream_task)
-                                            .await;
-                                    }
-                                    Err(err_val) => {
-                                        eprintln!("Error: TCP WSS Listener | {}", err_val);
-                                        drop(listener_socket);
-                                        return;
+                    match acceptor {
+                        Some(ref acceptor) => {
+                            match acceptor.accept(tcp_stream).await {
+                                Ok(listener_tcp_tls) => {
+                                    match tokio_tungstenite::accept_async(listener_tcp_tls).await {
+                                        Ok(wss_stream) => {
+                                            let listener_stream_task = tokio::spawn(stream(
+                                                new_listener,
+                                                wss_stream,
+                                                buffered_producer.subscribe(),
+                                            ));
+                                            let _ = listener_stream_tasks_producer
+                                                .send(listener_stream_task)
+                                                .await;
+                                        }
+                                        Err(err_val) => {
+                                            eprintln!("Error: TCP WSS Listener | {}", err_val);
+                                            drop(listener_socket);
+                                            return;
+                                        }
                                     }
                                 }
+                                Err(err_val) => {
+                                    eprintln!("Error: TCP TLS Listener | {}", err_val);
+                                    drop(listener_socket);
+                                    return;
+                                }
                             }
-                            Err(err_val) => {
-                                eprintln!("Error: TCP TLS Listener | {}", err_val);
-                                drop(listener_socket);
-                                return;
+                        },
+                        None => {
+                            match tokio_tungstenite::accept_async(tcp_stream).await {
+                                Ok(ws_stream) => {
+                                    let listener_stream_task = tokio::spawn(stream(
+                                        new_listener,
+                                        ws_stream,
+                                        buffered_producer.subscribe(),
+                                    ));
+                                    let _ = listener_stream_tasks_producer
+                                        .send(listener_stream_task)
+                                        .await;
+                                }
+                                Err(err_val) => {
+                                    eprintln!("Error: TCP WS Listener | {}", err_val);
+                                    drop(listener_socket);
+                                    return;
+                                }
                             }
-                        }
-                    } else {
-                        match tokio_tungstenite::accept_async(tcp_stream).await {
-                            Ok(ws_stream) => {
-                                let listener_stream_task = tokio::spawn(stream(
-                                    new_listener,
-                                    ws_stream,
-                                    buffered_producer.subscribe(),
-                                ));
-                                let _ = listener_stream_tasks_producer
-                                    .send(listener_stream_task)
-                                    .await;
-                            }
-                            Err(err_val) => {
-                                eprintln!("Error: TCP WS Listener | {}", err_val);
-                                drop(listener_socket);
-                                return;
-                            }
-                        }
+                        },
                     }
                     println!("New Listener: {} | {:#?}", listener_info, timer.elapsed());
                 }
