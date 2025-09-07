@@ -48,6 +48,15 @@ pub async fn connect(
                 {
                     Ok(wss_stream_connected) => ws_stream = wss_stream_connected.0,
                     Err(_) => {
+                        match streaming_to_base_sender_is_finished.send(true) {
+                            Ok(_) => {}
+                            Err(err_val) => {
+                                eprintln!(
+                                    "Error: Communication | Streaming to Base | Send | WSS | Is Finished | {}",
+                                    err_val
+                                );
+                            }
+                        }
                         return;
                     }
                 }
@@ -55,6 +64,15 @@ pub async fn connect(
             false => match tokio_tungstenite::connect_async(connect_addr.clone()).await {
                 Ok(ws_stream_connected) => ws_stream = ws_stream_connected.0,
                 Err(_) => {
+                    match streaming_to_base_sender_is_finished.send(true) {
+                        Ok(_) => {}
+                        Err(err_val) => {
+                            eprintln!(
+                                "Error: Communication | Streaming to Base | Send | WS | Is Finished | {}",
+                                err_val
+                            );
+                        }
+                    }
                     return;
                 }
             },
@@ -285,13 +303,11 @@ async fn status_checker(
     mixer_task.abort();
     message_organizer_task.abort();
     if problem {
-        println!("Problem");
         match streaming_to_base_sender_is_finished.send(true) {
             Ok(_) => println!("Cleaning Done: Streamer Disconnected"),
             Err(err_val) => eprintln!("Error: Cleaning | Is Finished | {}", err_val),
         }
     } else {
-        println!("No Problem");
         match streaming_to_base.send(true) {
             Ok(_) => println!("Cleaning Done: Streamer Disconnected"),
             Err(err_val) => eprintln!("Error: Cleaning | Is Stopped | {}", err_val),
