@@ -1,15 +1,12 @@
-use std::{io::Write, mem::MaybeUninit, sync::Arc};
-
 use brotli::DecompressorWriter;
-
 use dioxus::{
     prelude::spawn,
     signals::{Signal, Writable},
 };
-use futures_util::{stream::SplitStream, SinkExt, StreamExt};
-
+use futures_util::StreamExt;
 use ringbuf::{HeapRb, Producer, SharedRb};
-use tokio_tungstenite_wasm::{Message, WebSocketStream};
+use std::{io::Write, mem::MaybeUninit, sync::Arc};
+
 
 use crate::{listening::listen_podcast, BUFFER_LENGTH};
 
@@ -19,11 +16,15 @@ pub async fn start_listening(
 ) {
     if is_listening() {
         log::info!("Trying Sir");
-        let connect_addr = "ws://192.168.1.2:2424";
-
-        let (mut stream_producer, stream_consumer);
-        match tokio_tungstenite_wasm::connect(connect_addr).await {
-            Ok(ws_stream) => (stream_producer, stream_consumer) = ws_stream.split(),
+        let connect_addr = "wss://tahinli.com.tr:2424";
+        
+        let ws_stream: tokio_tungstenite_wasm::WebSocketStream;
+        match tokio_tungstenite_wasm::connect(
+            connect_addr,
+        )
+        .await
+        {
+            Ok(ws_stream_connected) => ws_stream = ws_stream_connected,
             Err(_) => {
                 is_listening.set(false);
                 return;
@@ -34,7 +35,7 @@ pub async fn start_listening(
         let (producer, consumer) = ring.split();
         let _sound_stream_task = spawn({
             async move {
-                sound_stream(is_listening, stream_consumer, producer).await;
+                sound_stream(is_listening, ws_stream, producer).await;
                 is_listening.set(false);
                 is_maintaining.set((false, is_maintaining().1));
             }
@@ -44,7 +45,6 @@ pub async fn start_listening(
                 listen_podcast(is_listening, consumer).await;
                 is_listening.set(false);
                 //stream_producer.send("Disconnect ME".into()).await.unwrap();
-                stream_producer.close().await.unwrap();
                 is_maintaining.set((is_maintaining().0, false));
             }
         });
@@ -53,19 +53,15 @@ pub async fn start_listening(
 
 pub async fn sound_stream(
     is_listening: Signal<bool>,
-    mut stream_consumer: SplitStream<WebSocketStream>,
+    mut ws_stream: tokio_tungstenite_wasm::WebSocketStream,
     mut producer: Producer<f32, Arc<SharedRb<f32, Vec<MaybeUninit<f32>>>>>,
 ) {
     log::info!("Attention! We need cables");
 
-    while let Some(message_with_question) = stream_consumer.next().await {
+    while let Some(message_with_question) = ws_stream.next().await {
         if is_listening() {
             //log::info!("{}", message_with_question.unwrap().len());
-            let mut data: Vec<u8> = vec![];
-            if let Message::Binary(message) = message_with_question.unwrap() {
-                data = message;
-            }
-
+            let data: Vec<u8> = message_with_question.unwrap().into();
             let mut decompression_writer = DecompressorWriter::new(vec![], BUFFER_LENGTH);
             if let Err(err_val) = decompression_writer.write_all(&data) {
                 log::error!("Error: Decompression | {}", err_val);
