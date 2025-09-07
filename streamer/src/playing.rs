@@ -27,6 +27,7 @@ pub async fn play(
     audio_stream_sender: Sender<f32>,
     file: File,
     decoded_to_playing_sender: Sender<f32>,
+    should_decode_now_sender: Sender<bool>,
     playing_to_base_sender: Sender<Player>,
     mut base_to_playing_receiver: Receiver<Player>,
     audio_volume: Arc<Mutex<f32>>,
@@ -39,16 +40,29 @@ pub async fn play(
     let output_device_sample_rate = output_device_config.sample_rate.0;
 
     let mut decoded_to_playing_receiver = decoded_to_playing_sender.subscribe();
+    let should_decode_now_receiver = should_decode_now_sender.subscribe();
     let audio_process_task = tokio::spawn(process_audio(
         output_device_sample_rate,
         file,
         decoded_to_playing_sender,
+        should_decode_now_receiver,
     ));
     while decoded_to_playing_receiver.is_empty() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
+
     let output_data_fn = move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
         for sample in data {
+            if should_decode_now_sender.receiver_count() > 0 {
+                if should_decode_now_sender.len() == 0 {
+                    if crate::AUDIO_BUFFER_SIZE / 2 > decoded_to_playing_receiver.len() {
+                        if let Err(err_val) = should_decode_now_sender.send(true) {
+                            eprintln!("Error: Decode Order | {}", err_val);
+                        }
+                    }
+                }
+            }
+
             if decoded_to_playing_receiver.len() > 0 {
                 let single = match decoded_to_playing_receiver.blocking_recv() {
                     Ok(single) => single * *audio_volume.lock().unwrap(),
@@ -165,7 +179,8 @@ fn resample_audio(
 async fn process_audio(
     output_device_sample_rate: u32,
     file: File,
-    decoded_to_playing_sender: tokio::sync::broadcast::Sender<f32>,
+    decoded_to_playing_sender: Sender<f32>,
+    mut should_decode_now_receiver: Receiver<bool>,
 ) {
     let media_source_stream = MediaSourceStream::new(Box::new(file), Default::default());
 
@@ -220,7 +235,6 @@ async fn process_audio(
             ),
             None => return,
         };
-
     let mut resampler = SincFixedIn::<f64>::new(
         output_device_sample_rate as f64 / audio_sample_rate as f64,
         2.0,
@@ -238,7 +252,7 @@ async fn process_audio(
         let _ = decoded_to_playing_sender.send(*single_right as f32);
     }
 
-    loop {
+    while let Ok(true) = should_decode_now_receiver.recv().await {
         let (mut audio_decoded_left, mut audio_decoded_right) = (vec![], vec![]);
 
         match decode_audio(&mut format, track_id, &mut decoder) {
@@ -253,7 +267,6 @@ async fn process_audio(
             }
             None => break,
         };
-
         let (audio_resampled_left, audio_resampled_right) =
             resample_audio(audio_decoded_left, audio_decoded_right, &mut resampler);
 
