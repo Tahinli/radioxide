@@ -1,5 +1,5 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use tokio::sync::broadcast::{Receiver, Sender};
+use tokio::{sync::broadcast::{Receiver, Sender}, task};
 
 pub async fn record(
     sound_stream_sender: Sender<f32>,
@@ -29,9 +29,11 @@ pub async fn record(
     input_stream.play().unwrap();
     println!("Recording Started");
     tokio::spawn(let_the_base_know(recording_to_base.clone()));
-    while let Err(_) = base_to_recording.try_recv() {
-        std::thread::sleep(std::time::Duration::from_secs(1));
-    }
+
+    task::block_in_place(|| {
+        let _ = base_to_recording.blocking_recv();
+    });
+    
     input_stream.pause().unwrap();
     tokio::spawn(let_the_base_know(recording_to_base.clone()));
     println!("Recording Stopped");
