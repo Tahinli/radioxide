@@ -146,8 +146,9 @@ impl Streamer {
                     println!("Connect");
                     self.gui_status.are_we_connect = Condition::Loading;
 
-                    let sound_stream_receiver =
+                    let microphone_stream_receiver =
                         self.data_channel.microphone_stream_sender.subscribe();
+                    let audio_stream_receiver = self.data_channel.audio_stream_sender.subscribe();
                     let streamer_config = self.config.clone().unwrap();
                     let streaming_to_base_sender =
                         self.communication_channel.streaming_to_base_sender.clone();
@@ -159,7 +160,8 @@ impl Streamer {
                     Command::perform(
                         async move {
                             gui_utils::connect(
-                                sound_stream_receiver,
+                                microphone_stream_receiver,
+                                audio_stream_receiver,
                                 streamer_config,
                                 streaming_to_base_sender,
                                 base_to_streaming_receiver,
@@ -257,8 +259,7 @@ impl Streamer {
                         .0,
                     );
 
-                    ///////Don't Forget it's for testing
-                    let audio_stream_sender = self.data_channel.microphone_stream_sender.clone();
+                    let audio_stream_sender = self.data_channel.audio_stream_sender.clone();
                     let playing_to_base_sender =
                         self.communication_channel.playing_to_base_sender.clone();
                     let base_to_playing_receiver = self

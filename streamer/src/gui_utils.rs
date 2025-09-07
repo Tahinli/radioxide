@@ -8,14 +8,16 @@ use crate::{
 };
 
 pub async fn connect(
-    sound_stream_receiver: Receiver<f32>,
+    microphone_stream_receiver: Receiver<f32>,
+    audio_stream_receiver: Receiver<f32>,
     streamer_config: Config,
     streaming_to_base_sender: Sender<bool>,
     base_to_streaming_receiver: Receiver<bool>,
 ) -> State {
     let mut streaming_to_base_receiver = streaming_to_base_sender.subscribe();
     tokio::spawn(streaming::connect(
-        sound_stream_receiver,
+        microphone_stream_receiver,
+        audio_stream_receiver,
         streamer_config,
         base_to_streaming_receiver,
         streaming_to_base_sender.clone(),
