@@ -273,7 +273,19 @@ impl Streamer {
                 Event::PlayAudio => {
                     println!("Play Audio");
                     self.gui_status.are_we_play_audio = Condition::Loading;
-
+                    let path = format!(
+                        "{}/{}",
+                        AUDIOS_PATH, self.audio_miscellaneous.selected_file_name
+                    );
+                    match File::open(path) {
+                        Ok(file) => {
+                            self.audio_miscellaneous.file = Some(file);
+                        }
+                        Err(err_val) => {
+                            eprintln!("Error: Open File | {}", err_val);
+                            self.audio_miscellaneous.file = None;
+                        }
+                    }
                     self.audio_miscellaneous.decoded_to_playing_sender = Some(
                         channel(
                             self.audio_miscellaneous
@@ -427,8 +439,16 @@ impl Streamer {
                 }
                 Event::ChooseAudio(chosen_audio) => {
                     let path = format!("{}/{}", AUDIOS_PATH, chosen_audio);
-                    self.audio_miscellaneous.file = Some(File::open(path).unwrap());
-                    self.audio_miscellaneous.selected_file_name = chosen_audio;
+                    match File::open(path) {
+                        Ok(file) => {
+                            self.audio_miscellaneous.file = Some(file);
+                            self.audio_miscellaneous.selected_file_name = chosen_audio;
+                        }
+                        Err(err_val) => {
+                            eprintln!("Error: Select Open | {}", err_val);
+                            self.audio_miscellaneous.file = None;
+                        }
+                    }
                     Command::none()
                 }
                 Event::ChangeMicrophoneVolume(value) => {
