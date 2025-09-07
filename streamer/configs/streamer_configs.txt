@@ -1,3 +1,4 @@
-address: tahinli.com.tr:2525
+address: 192.168.1.2:2525
 quality: 6
 latency: 100
+tls: false

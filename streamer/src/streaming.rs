@@ -4,38 +4,55 @@ use brotli::CompressorWriter;
 use futures_util::SinkExt;
 use ringbuf::HeapRb;
 use tokio::sync::broadcast::{channel, Receiver, Sender};
-use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
+use tokio_tungstenite::tungstenite::Message;
 
-use crate::BUFFER_LENGTH;
+use crate::{Config, BUFFER_LENGTH};
 const MAX_TOLERATED_MESSAGE_COUNT: usize = 10;
 
-pub async fn start(sound_stream_consumer: Receiver<f32>) {
-    let connect_addr = "wss://tahinli.com.tr:2525";
-
-    let tls_client_config = rustls_platform_verifier::tls_config();
-    let tls_connector = tokio_tungstenite::Connector::Rustls(Arc::new(tls_client_config));
+pub async fn start(sound_stream_consumer: Receiver<f32>, streamer_config:Config) {
+    let connect_addr = 
+    match streamer_config.tls {
+        true => format!("wss://{}", streamer_config.address),
+        false => format!("ws://{}", streamer_config.address),
+    };
 
     let ws_stream;
+
+    match streamer_config.tls {
+        true => {
+            let tls_client_config = rustls_platform_verifier::tls_config();
+    let tls_connector = tokio_tungstenite::Connector::Rustls(Arc::new(tls_client_config));
+
     match tokio_tungstenite::connect_async_tls_with_config(
-        connect_addr,
+        connect_addr.clone(),
         None,
         false,
         Some(tls_connector),
     )
     .await
     {
-        Ok(ws_stream_connected) => ws_stream = ws_stream_connected.0,
+        Ok(wss_stream_connected) => ws_stream = wss_stream_connected.0,
         Err(_) => {
             return;
         }
     }
+        },
+        false => {
+            match tokio_tungstenite::connect_async(connect_addr.clone()).await {
+                Ok(ws_stream_connected) => ws_stream = ws_stream_connected.0,
+                Err(_) => {
+                    return;
+                },
+            }
+        },
+    }
     let (message_producer, message_consumer) = channel(BUFFER_LENGTH);
     println!("Connected to: {}", connect_addr);
-    tokio::spawn(message_organizer(message_producer, sound_stream_consumer));
+    tokio::spawn(message_organizer(message_producer, sound_stream_consumer, streamer_config.quality, streamer_config.latency));
     tokio::spawn(stream(ws_stream, message_consumer));
 }
 
-async fn message_organizer(message_producer: Sender<Message>, mut consumer: Receiver<f32>) {
+async fn message_organizer(message_producer: Sender<Message>, mut consumer: Receiver<f32>, quality: u8, latency:u16) {
     loop {
         let mut messages: Vec<u8> = Vec::new();
         let mut iteration = consumer.len();
@@ -53,7 +70,7 @@ async fn message_organizer(message_producer: Sender<Message>, mut consumer: Rece
                         let _zero = charred.remove(1);
                         let _point = charred.remove(1);
                     }
-                    charred.truncate(4);
+                    charred.truncate(quality.into());
                     let mut single_data_packet: Vec<u8> = vec![];
                     for char in charred {
                         let char_packet = char.to_string().as_bytes().to_vec();
@@ -89,12 +106,12 @@ async fn message_organizer(message_producer: Sender<Message>, mut consumer: Rece
             //     message_producer.receiver_count()
             // );
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(latency.into())).await;
     }
 }
 
-async fn stream(
-    mut ws_stream: WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+async fn stream <T: futures_util::Sink<Message> + std::marker::Unpin>(
+    mut ws_stream: T,
     mut message_consumer: Receiver<Message>,
 ) {
     while let Ok(message) = message_consumer.recv().await {
