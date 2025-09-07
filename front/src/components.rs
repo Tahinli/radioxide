@@ -1,8 +1,52 @@
-use crate::status::{
-    coin_status_check, server_status_check, Coin, CoinStatus, Server, ServerStatus,
+use crate::{
+    status::{coin_status_check, server_status_check, Coin, CoinStatus, Server, ServerStatus},
+    streaming::start_listening,
 };
 use dioxus::prelude::*;
 use std::time::Duration;
+
+#[component]
+pub fn listen_renderer() -> Element {
+    let mut is_listening = use_signal(|| false);
+    let is_maintaining = use_signal(|| (false, false));
+    let call_start_listening = move |_| {
+        if !is_listening() {
+            if !is_maintaining().0 && !is_maintaining().1 {
+                spawn({
+                    to_owned![is_listening];
+                    to_owned![is_maintaining];
+                    is_listening.set(true);
+                    async move {
+                        start_listening(is_maintaining, is_listening).await;
+                    }
+                });
+            }
+        }
+        else {
+            is_listening.set(false);
+        }
+    };
+    rsx! {
+        div {
+            button {
+                disabled: !is_listening()&&(is_maintaining().0 || is_maintaining().1),
+                onclick: call_start_listening,
+                "style":"width: 100px; height: 100px;",
+                if is_listening() {
+                    "Disconnect & Stop Listening"
+                }
+                else {
+                    if is_maintaining().0 || is_maintaining().1 {
+                        "Maintaining, Be Right Back Soon"
+                    }
+                    else {
+                        "Connect & Listen"
+                    }
+                }
+            }
+        }
+    }
+}
 
 #[component]
 pub fn server_status_renderer(server_address: String) -> Element {

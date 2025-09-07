@@ -5,17 +5,15 @@ pub mod streaming;
 pub mod utils;
 
 #[derive(Debug, Clone)]
-pub struct AppState{
-
-}
+pub struct AppState {}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-enum ServerStatus{
+enum ServerStatus {
     Alive,
     Unstable,
     Dead,
 }
-#[derive(Debug, Clone, PartialEq, Serialize,Deserialize)]
-enum CoinStatus{
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+enum CoinStatus {
     Tail,
     Head,
 }
