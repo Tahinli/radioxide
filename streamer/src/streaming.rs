@@ -1,19 +1,23 @@
-use std::{io::Write, time::Duration};
+use std::{io::Write, sync::Arc, time::Duration};
 
 use brotli::CompressorWriter;
 use futures_util::SinkExt;
 use ringbuf::HeapRb;
 use tokio::sync::broadcast::{channel, Receiver, Sender};
-use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
+use tokio_tungstenite::{tungstenite::Message, Connector, WebSocketStream};
 
 use crate::BUFFER_LENGTH;
 const MAX_TOLERATED_MESSAGE_COUNT: usize = 10;
 
 pub async fn start(sound_stream_consumer: Receiver<f32>) {
     let connect_addr = "wss://192.168.1.2:2525";
-
+    let config = rustls_platform_verifier::tls_config();
+    
+    
+    let connector = tokio_tungstenite::Connector::Rustls(Arc::new(config));
     let ws_stream;
-    match tokio_tungstenite::connect_async(connect_addr).await {
+    
+    match tokio_tungstenite::connect_async_tls_with_config(connect_addr, None, false, Some(connector)).await {
         Ok(ws_stream_connected) => ws_stream = ws_stream_connected.0,
         Err(_) => {
             return;
