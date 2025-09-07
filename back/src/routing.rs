@@ -12,7 +12,7 @@ pub async fn routing(State(state): State<AppState>) -> Router{
 
 async fn alive() -> impl IntoResponse{
     let alive_json = serde_json::json!({
-        "status":"alive",
+        "status":"Alive",
     });
     println!("Alive");
     (StatusCode::OK, Json(alive_json))
