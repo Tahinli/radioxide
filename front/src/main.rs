@@ -1,9 +1,14 @@
+use std::mem::MaybeUninit;
+use std::sync::Arc;
 use std::time::Duration;
+use ringbuf::{Consumer, HeapRb, Producer, SharedRb};
 use tokio_with_wasm::tokio;
+use tokio_tungstenite_wasm::*;
+use futures_util::*;
 use dioxus::prelude::*;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{FromSample, Sample, SizedSample};
 use serde::Deserialize;
+use tokio_with_wasm::tokio::time::sleep;
 
 const SERVER_ADDRESS: &str = "https://tahinli.com.tr:2323";
 
@@ -75,15 +80,39 @@ async fn server_status_check(mut server_status:Signal<ServerStatus>) ->ServerSta
 async fn coin_status_check() -> Result<CoinStatus, reqwest::Error> {
     Ok(reqwest::get(format!("{}{}", SERVER_ADDRESS, "/coin")).await.unwrap().json::<CoinStatus>().await.unwrap())
 }
+async fn sound_stream(mut stream:WebSocketStream, mut producer: Producer<f32, Arc<SharedRb<f32, Vec<MaybeUninit<f32>>>>>) {
+    while let Some(msg) = stream.next().await {
+        match msg.unwrap().to_string().parse::<f32>() {
+            Ok(sound_data) => {
+                match producer.push(sound_data) {
+                    Ok(_) => {},
+                    Err(_) => {},
+                }
+            }
+            Err(_) =>{}
+        };
+    }
+    log::info!("Connection Lost Sir");
+}
+async fn start_listening() {
+    log::info!("Trying Sir");
+    let connect_addr = "ws://127.0.0.1:2424";
+    let stream = tokio_tungstenite_wasm::connect(connect_addr).await.unwrap();
+    let ring = HeapRb::<f32>::new(1000000);
+    let (producer, consumer) = ring.split();
+    tokio_with_wasm::tokio::spawn(sound_stream(stream, producer));
+    tokio_with_wasm::tokio::time::sleep(Duration::from_secs(1));
+    tokio_with_wasm::tokio::spawn(listen(consumer));
+}
 fn app() -> Element {
     rsx! {
         page_base {}
-        audio_stream_renderer {}
+        //audio_stream_renderer {}
         div {
             button {
-                onclick: move |_| record(),
+                onclick: move |_| start_listening(),
                 "style":"width: 80px; height: 50px;",
-                "Sinusoidal"
+                "Listen"
             }
         }
         coin_status_renderer {}
@@ -107,97 +136,121 @@ fn page_base() ->Element {
     }
 }
 
-pub async fn run<T>(device: &cpal::Device, config: &cpal::StreamConfig) -> Result<(), anyhow::Error>
-where
-    T: SizedSample + FromSample<f32>,
-{
-    let sample_rate = config.sample_rate.0 as f32;
-    let channels = config.channels as usize;
+// pub async fn run<T>(consumer: Consumer<f32, Arc<SharedRb<f32, Vec<MaybeUninit<f32>>>>>, device: &cpal::Device, config: &cpal::StreamConfig) -> Result<(), anyhow::Error>
+// where
+//     T: SizedSample + FromSample<f32>,
+// {
+//     let sample_rate = config.sample_rate.0 as f32;
+//     let channels = config.channels as usize;
 
-    // Produce a sinusoid of maximum amplitude.
-    let mut sample_clock = 0f32;
-    let mut next_value = move || {
-        sample_clock = (sample_clock + 1.0) % sample_rate;
-        (sample_clock * 440.0 * 2.0 * std::f32::consts::PI / sample_rate).sin()
+//     // Produce a sinusoid of maximum amplitude.
+//     let mut sample_clock = 0f32;
+//     let mut next_value = move || {
+//         sample_clock = (sample_clock + 1.0) % sample_rate;
+//         (sample_clock * 440.0 * 2.0 * std::f32::consts::PI / sample_rate).sin()
+//     };
+
+//     let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
+
+//     let stream = device.build_output_stream(
+//         config,
+//         move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
+//             write_data(data, channels, &mut next_value)
+//         },
+//         err_fn,
+//         None,
+//     )?;
+//     stream.play()?;
+
+//     loop {
+        
+//     }
+
+//     //Ok(())
+// }
+
+// fn write_data<T>(output: &mut [T], channels: usize, next_sample: &mut dyn FnMut() -> f32)
+// where
+//     T: Sample + FromSample<f32>,
+// {
+//     for frame in output.chunks_mut(channels) {
+//         let value: T = T::from_sample(next_sample());
+//         for sample in frame.iter_mut() {
+//             *sample = value;
+//         }
+//     }
+//}
+
+
+fn err_fn(err: cpal::StreamError) {
+    eprintln!("Something Happened: {}", err);
+}
+pub async fn listen(mut consumer: Consumer<f32, Arc<SharedRb<f32, Vec<MaybeUninit<f32>>>>>) {
+
+    log::info!("Hi");
+    let host = cpal::default_host();
+    let output_device = host.default_output_device().unwrap();
+    let config:cpal::StreamConfig = output_device.default_output_config().unwrap().into();
+
+    let output_data_fn = move |data: &mut [f32], _:&cpal::OutputCallbackInfo| {
+        for sample in data {
+            *sample = match consumer.pop() {
+                Some(s) => s,
+                None => {0.0},
+            };
+        }
     };
 
-    let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
 
-    let stream = device.build_output_stream(
-        config,
-        move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
-            write_data(data, channels, &mut next_value)
-        },
-        err_fn,
-        None,
-    )?;
-    stream.play()?;
+    let output_stream = output_device.build_output_stream(&config, output_data_fn, err_fn, None).unwrap();
 
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    output_stream.play().unwrap();
+    sleep(Duration::from_secs(100)).await;
+    output_stream.pause().unwrap();
+    // let host = cpal::default_host();
+    // let devices = host.devices().unwrap();
+    // for (_derive_index, device) in devices.enumerate() {
+    //     log::info!("{:?}", device.name());
+    // }
+    // let device = host.default_output_device().unwrap();
 
-    Ok(())
-}
-
-fn write_data<T>(output: &mut [T], channels: usize, next_sample: &mut dyn FnMut() -> f32)
-where
-    T: Sample + FromSample<f32>,
-{
-    for frame in output.chunks_mut(channels) {
-        let value: T = T::from_sample(next_sample());
-        for sample in frame.iter_mut() {
-            *sample = value;
-        }
-    }
-}
-
-
-
-pub async fn record() {
-    log::info!("mic");
-    let host = cpal::default_host();
-    let devices = host.devices().unwrap();
-    for (_derive_index, device) in devices.enumerate() {
-        log::info!("{:?}", device.name());
-    }
-    let device = host.default_output_device().unwrap();
-
-    let mut supported_config = device.supported_output_configs().unwrap();
-    let config = supported_config.next().unwrap().with_max_sample_rate();
-    log::info!("{:?}", config);
-    match config.sample_format() {
-        cpal::SampleFormat::I8 => {log::info!("i8")},
-        cpal::SampleFormat::I16 => {log::info!("i16")},
-        //cpal::SampleFormat::I24 => {log::info!("i24")},
-        cpal::SampleFormat::I32 => {log::info!("i32")},
-        //cpal::SampleFormat::I48 => {log::info!("i48")},
-        cpal::SampleFormat::I64 => {log::info!("i64")},
-        cpal::SampleFormat::U8 => {log::info!("u8")},
-        cpal::SampleFormat::U16 => {log::info!("u16")},
-        //cpal::SampleFormat::U24 => {log::info!("u24")},
-        cpal::SampleFormat::U32 => {log::info!("u32")},
-        //cpal::SampleFormat::U48 => {log::info!("u48")},
-        cpal::SampleFormat::U64 => {log::info!("u64")},
-        cpal::SampleFormat::F32 => {log::info!("f32");
-        run::<f32>(&device, &config.clone().into()).await.unwrap();},
-        cpal::SampleFormat::F64 => {log::info!("f64")},
-        sample_format => panic!("Unsupported sample format '{sample_format}'"),
-    }
-    /*let config:StreamConfig = config.into();
-    let stream = device.build_output_stream(
-        &config, 
-        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+    // let mut supported_config = device.supported_output_configs().unwrap();
+    // let config = supported_config.next().unwrap().with_max_sample_rate();
+    // log::info!("{:?}", config);
+    // match config.sample_format() {
+    //     cpal::SampleFormat::I8 => {log::info!("i8")},
+    //     cpal::SampleFormat::I16 => {log::info!("i16")},
+    //     //cpal::SampleFormat::I24 => {log::info!("i24")},
+    //     cpal::SampleFormat::I32 => {log::info!("i32")},
+    //     //cpal::SampleFormat::I48 => {log::info!("i48")},
+    //     cpal::SampleFormat::I64 => {log::info!("i64")},
+    //     cpal::SampleFormat::U8 => {log::info!("u8")},
+    //     cpal::SampleFormat::U16 => {log::info!("u16")},
+    //     //cpal::SampleFormat::U24 => {log::info!("u24")},
+    //     cpal::SampleFormat::U32 => {log::info!("u32")},
+    //     //cpal::SampleFormat::U48 => {log::info!("u48")},
+    //     cpal::SampleFormat::U64 => {log::info!("u64")},
+    //     cpal::SampleFormat::F32 => {log::info!("f32");
+    //     run::<f32>(consumer, &device, &config.clone().into()).await.unwrap();},
+    //     cpal::SampleFormat::F64 => {log::info!("f64")},
+    //     sample_format => panic!("Unsupported sample format '{sample_format}'"),
+    // }
+    // let config:StreamConfig = config.into();
+    // let stream = device.build_output_stream(
+    //     &config, 
+    //     move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
             
-            log::info!("{:?}", data);
-            //I need to do something here, I think
-        }, 
-        move |_err| {
+    //         log::info!("{:?}", data);
+    //         //I need to do something here, I think
+    //     }, 
+    //     move |_err| {
             
-        }, 
-        None).unwrap();
+    //     }, 
+    //     None).unwrap();
     
-    stream.play().unwrap();
-    tokio::time::sleep(Duration::from_secs(10)).await;
-    stream.pause().unwrap();*/
+    // stream.play().unwrap();
+    // tokio::time::sleep(Duration::from_secs(10)).await;
+    // stream.pause().unwrap();
 
     
 }
