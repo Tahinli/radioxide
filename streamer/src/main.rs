@@ -1,16 +1,17 @@
-use std::time::Duration;
-
-use streamer::{recording::recording, streaming::start, utils::get_config, BUFFER_LENGTH};
-use tokio::sync::broadcast::channel;
+use streamer::gui::Streamer;
 
 #[tokio::main]
 async fn main() {
     println!("Hello, world!");
-    let streamer_config = get_config().await;
-    let (sound_stream_producer, sound_stream_consumer) = channel(BUFFER_LENGTH);
-    tokio::spawn(recording(sound_stream_producer));
-    tokio::spawn(start(sound_stream_consumer, streamer_config));
-    loop {
-        tokio::time::sleep(Duration::from_secs(1000000000)).await;
-    }
+    tokio::task::block_in_place(|| {
+        iced::program("Streamer GUI", Streamer::update, Streamer::view)
+            .centered()
+            .window_size((350.0, 450.0))
+            .load(Streamer::load_config)
+            .antialiasing(true)
+            .subscription(Streamer::subscription)
+            .exit_on_close_request(false)
+            .run()
+            .unwrap()
+    });
 }
