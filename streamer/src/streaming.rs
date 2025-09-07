@@ -78,7 +78,7 @@ async fn message_organizer(message_producer: Sender<Message>, mut consumer: Rece
             //     message_producer.receiver_count()
             // );
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 

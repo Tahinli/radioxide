@@ -113,7 +113,7 @@ pub fn coin_status_renderer(server_address: String) -> Element {
                     }
                     None => {
                         is_loading.set(false);
-                        coin_result.set(CoinStatus {status: Coin::Dead});
+                        coin_result.set(CoinStatus { status: Coin::Dead });
                     }
                 }
             }

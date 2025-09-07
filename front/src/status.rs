@@ -77,20 +77,16 @@ pub async fn server_status_check(
 }
 pub async fn coin_status_check(server_address: &String) -> Option<CoinStatus> {
     match reqwest::get(format!("{}{}", server_address, "/coin")).await {
-        Ok(response) => {
-            match response.json::<CoinStatus>().await {
-                Ok(coin_status)=> {
-                    Some(coin_status)
-                }
-                Err(err_val) => {
-                    log::error!("Error: Can't Deserialise -> {}", err_val);
-                    None
-                }
+        Ok(response) => match response.json::<CoinStatus>().await {
+            Ok(coin_status) => Some(coin_status),
+            Err(err_val) => {
+                log::error!("Error: Can't Deserialise -> {}", err_val);
+                None
             }
         },
         Err(err_val) => {
             log::error!("Error: Response from Server -> {}", err_val);
             None
-        },
+        }
     }
 }
