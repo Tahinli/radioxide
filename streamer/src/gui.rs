@@ -1,5 +1,7 @@
 use iced::{
-    alignment, widget::{column, container, row, text::LineHeight, Container, Rule}, window, Color, Command, Subscription
+    alignment,
+    widget::{column, container, row, text::LineHeight, Container, Rule},
+    window, Color, Command, Subscription,
 };
 use tokio::sync::broadcast::{channel, Receiver, Sender};
 
@@ -49,16 +51,17 @@ pub enum Message {
 }
 #[derive(Debug)]
 struct DataChannel {
-    sound_stream_sender: Sender<f32>,
+    microphone_stream_sender: Sender<f32>,
+    audio_stream_sender: Sender<f32>,
 }
 #[derive(Debug)]
 struct CommunicationChannel {
-    base_to_streaming: Sender<bool>,
-    streaming_to_base: Sender<bool>,
-    base_to_recording: Sender<bool>,
-    recording_to_base: Sender<bool>,
-    base_to_playing_audio: Sender<bool>,
-    playing_audio_to_base: Sender<bool>,
+    base_to_streaming_sender: Sender<bool>,
+    streaming_to_base_sender: Sender<bool>,
+    base_to_recording_sender: Sender<bool>,
+    recording_to_base_sender: Sender<bool>,
+    base_to_playing_sender: Sender<bool>,
+    playing_to_base_sender: Sender<bool>,
 }
 #[derive(Debug, PartialEq)]
 enum Condition {
@@ -91,15 +94,16 @@ impl Streamer {
         Self {
             config: None,
             data_channel: DataChannel {
-                sound_stream_sender: channel(BUFFER_LENGTH).0,
+                microphone_stream_sender: channel(BUFFER_LENGTH).0,
+                audio_stream_sender: channel(BUFFER_LENGTH).0,
             },
             communication_channel: CommunicationChannel {
-                base_to_streaming: channel(1).0,
-                streaming_to_base: channel(1).0,
-                base_to_recording: channel(1).0,
-                recording_to_base: channel(1).0,
-                base_to_playing_audio: channel(1).0,
-                playing_audio_to_base: channel(1).0,
+                base_to_streaming_sender: channel(1).0,
+                streaming_to_base_sender: channel(1).0,
+                base_to_recording_sender: channel(1).0,
+                recording_to_base_sender: channel(1).0,
+                base_to_playing_sender: channel(1).0,
+                playing_to_base_sender: channel(1).0,
             },
             gui_status: GUIStatus {
                 are_we_connect: Condition::Passive,
@@ -116,19 +120,23 @@ impl Streamer {
                     println!("Connect");
                     self.gui_status.are_we_connect = Condition::Loading;
 
-                    let sound_stream_receiver = self.data_channel.sound_stream_sender.subscribe();
+                    let sound_stream_receiver =
+                        self.data_channel.microphone_stream_sender.subscribe();
                     let streamer_config = self.config.clone().unwrap();
-                    let streaming_to_base = self.communication_channel.streaming_to_base.clone();
-                    let base_to_streaming =
-                        self.communication_channel.base_to_streaming.subscribe();
+                    let streaming_to_base_sender =
+                        self.communication_channel.streaming_to_base_sender.clone();
+                    let base_to_streaming_receiver = self
+                        .communication_channel
+                        .base_to_streaming_sender
+                        .subscribe();
 
                     Command::perform(
                         async move {
                             gui_utils::connect(
                                 sound_stream_receiver,
                                 streamer_config,
-                                streaming_to_base,
-                                base_to_streaming,
+                                streaming_to_base_sender,
+                                base_to_streaming_receiver,
                             )
                             .await
                         },
@@ -139,12 +147,21 @@ impl Streamer {
                     println!("Disconnect");
                     self.gui_status.are_we_connect = Condition::Loading;
 
-                    let streaming_to_base =
-                        self.communication_channel.streaming_to_base.subscribe();
-                    let base_to_streaming = self.communication_channel.base_to_streaming.clone();
+                    let streaming_to_base_receiver = self
+                        .communication_channel
+                        .streaming_to_base_sender
+                        .subscribe();
+                    let base_to_streaming_sender =
+                        self.communication_channel.base_to_streaming_sender.clone();
 
                     Command::perform(
-                        async move { gui_utils::disconnect(streaming_to_base, base_to_streaming).await },
+                        async move {
+                            gui_utils::disconnect(
+                                streaming_to_base_receiver,
+                                base_to_streaming_sender,
+                            )
+                            .await
+                        },
                         Message::State,
                     )
                 }
@@ -152,17 +169,21 @@ impl Streamer {
                     println!("Record");
                     self.gui_status.are_we_record = Condition::Loading;
 
-                    let sound_stream_sender = self.data_channel.sound_stream_sender.clone();
-                    let recording_to_base = self.communication_channel.recording_to_base.clone();
-                    let base_to_recording =
-                        self.communication_channel.base_to_recording.subscribe();
+                    let microphone_stream_sender =
+                        self.data_channel.microphone_stream_sender.clone();
+                    let recording_to_base_sender =
+                        self.communication_channel.recording_to_base_sender.clone();
+                    let base_to_recording_receiver = self
+                        .communication_channel
+                        .base_to_recording_sender
+                        .subscribe();
 
                     Command::perform(
                         async move {
                             gui_utils::start_recording(
-                                sound_stream_sender,
-                                recording_to_base,
-                                base_to_recording,
+                                microphone_stream_sender,
+                                recording_to_base_sender,
+                                base_to_recording_receiver,
                             )
                             .await
                         },
@@ -172,12 +193,19 @@ impl Streamer {
                 Event::StopRecord => {
                     println!("Stop Record");
                     self.gui_status.are_we_record = Condition::Loading;
-                    let recording_to_base =
-                        self.communication_channel.recording_to_base.subscribe();
-                    let base_to_recording = self.communication_channel.base_to_recording.clone();
+                    let recording_to_base_receiver = self
+                        .communication_channel
+                        .recording_to_base_sender
+                        .subscribe();
+                    let base_to_recording_sender =
+                        self.communication_channel.base_to_recording_sender.clone();
                     Command::perform(
                         async move {
-                            gui_utils::stop_recording(recording_to_base, base_to_recording).await
+                            gui_utils::stop_recording(
+                                recording_to_base_receiver,
+                                base_to_recording_sender,
+                            )
+                            .await
                         },
                         Message::State,
                     )
@@ -185,17 +213,21 @@ impl Streamer {
                 Event::PlayAudio => {
                     println!("Play Audio");
                     self.gui_status.are_we_play_audio = Condition::Loading;
-
-                    let playing_audio_to_base =
-                        self.communication_channel.playing_audio_to_base.clone();
-                    let base_to_playing_audio =
-                        self.communication_channel.base_to_playing_audio.subscribe();
+                    ///////TEST İÇİN YANLIŞ VERDİM UNUTMA
+                    let audio_stream_sender = self.data_channel.microphone_stream_sender.clone();
+                    let playing_to_base_sender =
+                        self.communication_channel.playing_to_base_sender.clone();
+                    let base_to_playing_receiver = self
+                        .communication_channel
+                        .base_to_playing_sender
+                        .subscribe();
 
                     Command::perform(
                         async move {
-                            gui_utils::start_playing_audio(
-                                playing_audio_to_base,
-                                base_to_playing_audio,
+                            gui_utils::start_playing(
+                                audio_stream_sender,
+                                playing_to_base_sender,
+                                base_to_playing_receiver,
                             )
                             .await
                         },
@@ -205,18 +237,19 @@ impl Streamer {
                 Event::StopAudio => {
                     println!("Stop Audio");
                     self.gui_status.are_we_play_audio = Condition::Loading;
-                    let mut playing_to_base_receiver =
-                        self.communication_channel.playing_audio_to_base.subscribe();
-                    let _ = self.communication_channel.base_to_playing_audio.send(false);
+                    let playing_to_base_receiver = self
+                        .communication_channel
+                        .playing_to_base_sender
+                        .subscribe();
+                    let base_to_playing_sender =
+                        self.communication_channel.base_to_playing_sender.clone();
                     Command::perform(
                         async move {
-                            match playing_to_base_receiver.recv().await {
-                                Ok(_) => State::StopAudio,
-                                Err(err_val) => {
-                                    eprint!("Error: Communication | Playing | {}", err_val);
-                                    State::PlayingAudio
-                                }
-                            }
+                            gui_utils::stop_playing(
+                                playing_to_base_receiver,
+                                base_to_playing_sender,
+                            )
+                            .await
                         },
                         Message::State,
                     )
@@ -279,7 +312,9 @@ impl Streamer {
         //let color_black = Color::from_rgb8(0, 0, 0);
         let color_pink = Color::from_rgb8(255, 150, 150);
 
-        let header = text_centered("Radioxide").size(35).line_height(LineHeight::Relative(1.0));
+        let header = text_centered("Radioxide")
+            .size(35)
+            .line_height(LineHeight::Relative(1.0));
 
         let connection_text = text_centered("Connection");
         let recording_text = text_centered("Microphone");
@@ -307,7 +342,7 @@ impl Streamer {
         let record_button = match self.gui_status.are_we_record {
             Condition::Active => {
                 recording_status_text = text_centered("Active").color(color_green);
-                button_with_centered_text("Start Mic").on_press(Message::Event(Event::StopRecord))
+                button_with_centered_text("Stop Mic").on_press(Message::Event(Event::StopRecord))
             }
             Condition::Loading => {
                 recording_status_text = text_centered("Loading").color(color_yellow);
@@ -315,7 +350,7 @@ impl Streamer {
             }
             Condition::Passive => {
                 recording_status_text = text_centered("Passive").color(color_pink);
-                button_with_centered_text("Stop Mic").on_press(Message::Event(Event::Record))
+                button_with_centered_text("Start Mic").on_press(Message::Event(Event::Record))
             }
         };
 
@@ -334,9 +369,7 @@ impl Streamer {
             }
         };
 
-        let header_content = row![header]
-        .width(350)
-        .height(50);
+        let header_content = row![header].width(350).height(50);
         let text_content = row![
             connection_text,
             Rule::vertical(1),
@@ -367,16 +400,17 @@ impl Streamer {
             header_content,
             Rule::horizontal(1),
             text_content,
-            
             button_content,
-            
             status_content,
             Rule::horizontal(1),
         ]
         .spacing(20)
         .width(350)
         .height(300);
-        container(content).height(300).center_x().align_y(alignment::Vertical::Top)
+        container(content)
+            .height(300)
+            .center_x()
+            .align_y(alignment::Vertical::Top)
     }
     pub fn subscription(&self) -> Subscription<Message> {
         iced::event::listen()
@@ -393,26 +427,27 @@ impl Streamer {
         )
     }
     fn call_closer(
-        streaming_to_base: Receiver<bool>,
-        base_to_streaming: Sender<bool>,
-        recording_to_base: Receiver<bool>,
-        base_to_recording: Sender<bool>,
-        playing_audio_to_base: Receiver<bool>,
-        base_to_playing_audio: Sender<bool>,
+        streaming_to_base_receiver: Receiver<bool>,
+        base_to_streaming_sender: Sender<bool>,
+        recording_to_base_receiver: Receiver<bool>,
+        base_to_recording_sender: Sender<bool>,
+        playing_to_base_receiver: Receiver<bool>,
+        base_to_playing_sender: Sender<bool>,
         features_in_need: Features,
         window_id: window::Id,
     ) -> Command<Message> {
         Command::perform(
             async move {
                 if features_in_need.stream {
-                    gui_utils::disconnect(streaming_to_base, base_to_streaming).await;
+                    gui_utils::disconnect(streaming_to_base_receiver, base_to_streaming_sender)
+                        .await;
                 }
                 if features_in_need.record {
-                    gui_utils::stop_recording(recording_to_base, base_to_recording).await;
+                    gui_utils::stop_recording(recording_to_base_receiver, base_to_recording_sender)
+                        .await;
                 }
                 if features_in_need.play_audio {
-                    gui_utils::stop_playing_audio(playing_audio_to_base, base_to_playing_audio)
-                        .await;
+                    gui_utils::stop_playing(playing_to_base_receiver, base_to_playing_sender).await;
                 }
                 Event::CloseWindow(window_id)
             },
@@ -435,22 +470,31 @@ impl Streamer {
         if self.gui_status.are_we_play_audio == Condition::Active {
             features_in_need.play_audio = true;
         }
-        let streaming_to_base = self.communication_channel.streaming_to_base.subscribe();
-        let base_to_streaming = self.communication_channel.base_to_streaming.clone();
+        let streaming_to_base_receiver = self
+            .communication_channel
+            .streaming_to_base_sender
+            .subscribe();
+        let base_to_streaming_sender = self.communication_channel.base_to_streaming_sender.clone();
 
-        let recording_to_base = self.communication_channel.recording_to_base.subscribe();
-        let base_to_recording = self.communication_channel.base_to_recording.clone();
+        let recording_to_base_receiver = self
+            .communication_channel
+            .recording_to_base_sender
+            .subscribe();
+        let base_to_recording_sender = self.communication_channel.base_to_recording_sender.clone();
 
-        let playing_audio_to_base = self.communication_channel.playing_audio_to_base.subscribe();
-        let base_to_playing_audio = self.communication_channel.base_to_playing_audio.clone();
+        let playing_to_base_receiver = self
+            .communication_channel
+            .playing_to_base_sender
+            .subscribe();
+        let base_to_playing_sender = self.communication_channel.base_to_playing_sender.clone();
 
         Self::call_closer(
-            streaming_to_base,
-            base_to_streaming,
-            recording_to_base,
-            base_to_recording,
-            playing_audio_to_base,
-            base_to_playing_audio,
+            streaming_to_base_receiver,
+            base_to_streaming_sender,
+            recording_to_base_receiver,
+            base_to_recording_sender,
+            playing_to_base_receiver,
+            base_to_playing_sender,
             features_in_need,
             window_id,
         )
