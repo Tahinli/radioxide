@@ -1,7 +1,15 @@
+use std::time::Duration;
+use async_std::task;
 use dioxus::prelude::*;
 use serde::Deserialize;
 
 const SERVER_ADDRESS: &str = "https://localhost:2323";
+
+static SERVER_STATUS:GlobalSignal<ServerStatus> = Signal::global(move || ServerStatus {status:"Alive".to_string(),});
+static SERVER_STATUS_WATCHDOG:GlobalSignal<bool> = Signal::global(move || false);
+static SERVER_STATUS_LOOSING:GlobalSignal<bool> = Signal::global(move || false);
+static SERVER_STATUS_IS_DEAD:GlobalSignal<bool> = Signal::global(move || false);
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 struct ServerStatus{
     status: String,
@@ -17,8 +25,26 @@ fn main() {
     launch(app);
 }
 
-async fn server_status_check() ->Result<ServerStatus, reqwest::Error> {
-    Ok(reqwest::get(SERVER_ADDRESS).await.unwrap().json::<ServerStatus>().await.unwrap())
+async fn server_status_check() ->ServerStatus {
+    match reqwest::get(SERVER_ADDRESS).await {
+        Ok(response) => {
+            *SERVER_STATUS_WATCHDOG.write() = false;
+            match response.json::<ServerStatus>().await {
+                Ok(server_status) => {
+                    *SERVER_STATUS_LOOSING.write() = false;
+                    server_status
+                }
+                Err(err_val) => {
+                    *SERVER_STATUS_LOOSING.write() = true;
+                    ServerStatus{status:err_val.to_string(),}
+                }
+            }
+        }
+        Err(err_val) => {
+            *SERVER_STATUS_LOOSING.write() = true;
+            ServerStatus{status:err_val.to_string(),}
+        }
+    }
 }
 async fn coin_status_check() -> Result<CoinStatus, reqwest::Error> {
     Ok(reqwest::get(format!("{}{}", SERVER_ADDRESS, "/coin")).await.unwrap().json::<CoinStatus>().await.unwrap())
@@ -46,34 +72,57 @@ fn page_base() ->Element {
         }
     }
 }
-
 fn server_status_renderer() -> Element {
-    let server_status = use_resource(move || server_status_check());
-    match &*server_status.value().read() {
-        Some(Ok(server_status)) => {
-            rsx! {
-                h5 {
-                    ShowServerStatus { server_status: server_status.clone() }
+    let server_check_time = 1_u64;
+    let _server_status_task:Coroutine<()> = use_coroutine(|_| async move {
+        loop {
+            task::sleep(Duration::from_secs(server_check_time)).await;
+            *SERVER_STATUS_WATCHDOG.write() = true;
+            *SERVER_STATUS.write() = server_status_check().await;
+            /*match server_status_check().await {
+                Ok(status) => {
+                    server_status_watchdog.set(false);
+                    server_status.set(status);
                 }
-            }
+                Err(err_val) => {
+                    server_status.set(ServerStatus {status:err_val.to_string(),});
+                }
+            }*/
             
-        }
-        Some(Err(err_val)) => {
-            rsx! {
-                h5 {
-                    "Server Status: "
-                    { err_val.to_string() }
+        };
+    });
+    let _server_status_watchdog_timer:Coroutine<()> = use_coroutine(|_| async move {
+            let mut is_loosing_counter = 0_i8;
+            loop {  
+                task::sleep(Duration::from_secs(2*server_check_time+1)).await;
+                if !SERVER_STATUS_WATCHDOG() {
+                    *SERVER_STATUS_LOOSING.write() = false;
                 }
-            }
-        }
-        None => {
-            rsx! {
-                h5 {
-                    "Server Status: Dead"
+                if SERVER_STATUS_WATCHDOG() {
+                    for _i in 0..5 {
+                        task::sleep(Duration::from_secs(1)).await;
+                        if SERVER_STATUS_WATCHDOG() {
+                            is_loosing_counter += 1;
+                        }
+                    }
+                    
                 }
-            }
+                if is_loosing_counter > 4 {
+                    *SERVER_STATUS_LOOSING.write() = true;
+                }
+                is_loosing_counter = 0;
+        }
+    });
+    rsx! {
+        if SERVER_STATUS_LOOSING() && SERVER_STATUS_WATCHDOG() {
+            {*SERVER_STATUS_IS_DEAD.write() = true}
+            ShowServerStatus {server_status:ServerStatus{status:"Dead".to_string(),}}
+        }
+        else {
+            ShowServerStatus {server_status:SERVER_STATUS()}        
         }
     }
+    
 }
 fn coin_status_renderer() -> Element {
     let is_loading = use_signal(|| false);
@@ -89,15 +138,13 @@ fn coin_status_renderer() -> Element {
                         is_loading.set(false);
                         coin_result.set(coin_status);
                     }
-                    Err(err_val) => {
+                    Err(_) => {
                         is_loading.set(false);
-                        log::info!("{}", err_val);
                     }
                 }
             }
         });
     };
-    log::info!("{}", is_loading);
     rsx! {
         div {
             button {
