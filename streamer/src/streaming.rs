@@ -33,12 +33,16 @@ async fn message_organizer(message_producer: Sender<Message>, mut consumer: Rece
                 Ok(single_data) => {
                     let ring = HeapRb::<u8>::new(BUFFER_LENGTH);
                     let (mut producer, mut consumer) = ring.split();
-                    let mut charred:Vec<char> = single_data.to_string().chars().collect();
+                    let mut charred: Vec<char> = single_data.to_string().chars().collect();
                     if charred[0] == '0' {
                         charred.insert(0, '+');
                     }
-                    charred.truncate(6);
-                    let mut single_data_packet:Vec<u8> = vec![];
+                    if charred.len() > 2 {
+                        let _zero = charred.remove(1);
+                        let _point = charred.remove(1);
+                    }
+                    charred.truncate(4);
+                    let mut single_data_packet: Vec<u8> = vec![];
                     for char in charred {
                         let char_packet = char.to_string().as_bytes().to_vec();
                         for byte in char_packet {
@@ -66,7 +70,7 @@ async fn message_organizer(message_producer: Sender<Message>, mut consumer: Rece
                 message_producer.receiver_count()
             );
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(Duration::from_millis(1000)).await;
     }
 }
 
