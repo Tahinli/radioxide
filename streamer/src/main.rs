@@ -1,4 +1,4 @@
-use streamer::gui::Streamer;
+use streamer::{gui::Streamer, WINDOW_SIZE_HEIGHT, WINDOW_SIZE_WIDTH};
 
 #[tokio::main]
 async fn main() {
@@ -6,31 +6,10 @@ async fn main() {
 
     iced::application("Streamer GUI", Streamer::update, Streamer::view)
         .centered()
-        .window_size((350.0, 650.0))
+        .window_size((WINDOW_SIZE_WIDTH as f32, WINDOW_SIZE_HEIGHT as f32))
         .antialiasing(true)
         .subscription(Streamer::subscription)
         .exit_on_close_request(false)
         .run_with(|| Streamer::new_with_load())
         .unwrap()
-
-    // tokio::task::spawn_blocking(|| {
-    //     iced::application("Streamer GUI", Streamer::update, Streamer::view)
-    //         .centered()
-    //         .window_size((350.0, 650.0))
-    //         .antialiasing(true)
-    //         .subscription(Streamer::subscription)
-    //         .exit_on_close_request(false)
-    //         .run_with(|| Streamer::new_with_load())
-    //         .unwrap()
-    // });
-    // tokio::task::block_in_place(|| {
-    //     iced::application("Streamer GUI", Streamer::update, Streamer::view)
-    //         .centered()
-    //         .window_size((350.0, 650.0))
-    //         .antialiasing(true)
-    //         .subscription(Streamer::subscription)
-    //         .exit_on_close_request(false)
-    //         .run_with(|| Streamer::new_with_load())
-    //         .unwrap()
-    // });
 }
