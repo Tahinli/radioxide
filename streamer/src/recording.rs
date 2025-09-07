@@ -20,9 +20,8 @@ pub async fn recording(sound_stream_producer: Sender<f32>) {
         .build_input_stream(&config, input_data_fn, err_fn, None)
         .unwrap();
 
-    println!("STREAMIN");
     input_stream.play().unwrap();
-
+    println!("Recording Started");
     std::thread::sleep(std::time::Duration::from_secs(1000000000));
     println!("DONE I HOPE");
 }

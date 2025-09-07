@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+brotli = "4.0.0"
 cpal = "0.15.3"
 futures-util = { version = "0.3.30", features = ["futures-sink", "sink"] }
 ringbuf = "0.3.3"
