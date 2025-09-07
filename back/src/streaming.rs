@@ -42,7 +42,7 @@ pub async fn start() {
 }
 async fn buffer_layer(mut message_consumer: Receiver<Message>, buffered_producer: Sender<Message>) {
     loop {
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
         let mut messages_buffered: Vec<Message> = vec![];
         while message_consumer.len() > 0 {
             match message_consumer.recv().await {
@@ -52,12 +52,14 @@ async fn buffer_layer(mut message_consumer: Receiver<Message>, buffered_producer
                 Err(_) => {}
             }
         }
+        let mut message_buffered_concreted = String::new();
         if messages_buffered.len() > 0 {
             for message_buffered in messages_buffered {
-                match buffered_producer.send(message_buffered) {
-                    Ok(_) => {}
-                    Err(_) => {}
-                }
+                message_buffered_concreted = format!("{}{}", message_buffered_concreted, message_buffered);
+            }
+            match buffered_producer.send(message_buffered_concreted.into()) {
+                Ok(_) => {}
+                Err(_) => {}
             }
         }
     }
@@ -108,7 +110,7 @@ async fn message_organizer(
                 message_producer.receiver_count()
             );
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
 async fn stream(

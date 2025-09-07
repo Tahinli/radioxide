@@ -41,7 +41,7 @@ async fn message_organizer(message_producer: Sender<Message>, mut consumer: Rece
                         let _zero = charred.remove(1);
                         let _point = charred.remove(1);
                     }
-                    charred.truncate(4);
+                    charred.truncate(8);
                     let mut single_data_packet: Vec<u8> = vec![];
                     for char in charred {
                         let char_packet = char.to_string().as_bytes().to_vec();
@@ -70,7 +70,7 @@ async fn message_organizer(message_producer: Sender<Message>, mut consumer: Rece
                 message_producer.receiver_count()
             );
         }
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
 
