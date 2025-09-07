@@ -33,13 +33,19 @@ async fn message_organizer(message_producer: Sender<Message>, mut consumer: Rece
                 Ok(single_data) => {
                     let ring = HeapRb::<u8>::new(BUFFER_LENGTH);
                     let (mut producer, mut consumer) = ring.split();
-                    let single_data_packet = single_data.to_string().as_bytes().to_vec();
-                    let terminator = "#".as_bytes().to_vec();
-
-                    for element in single_data_packet {
-                        producer.push(element).unwrap();
+                    let mut charred:Vec<char> = single_data.to_string().chars().collect();
+                    if charred[0] == '0' {
+                        charred.insert(0, '+');
                     }
-                    for element in terminator {
+                    charred.truncate(6);
+                    let mut single_data_packet:Vec<u8> = vec![];
+                    for char in charred {
+                        let char_packet = char.to_string().as_bytes().to_vec();
+                        for byte in char_packet {
+                            single_data_packet.push(byte);
+                        }
+                    }
+                    for element in single_data_packet {
                         producer.push(element).unwrap();
                     }
                     while !consumer.is_empty() {
