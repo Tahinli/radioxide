@@ -1,8 +1,11 @@
 use std::time::Duration;
-use async_std::task;
+use tokio_with_wasm::tokio;
 use dioxus::prelude::*;
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::{FromSample, Sample, SizedSample};
 use serde::Deserialize;
-const SERVER_ADDRESS: &str = "https://localhost:2323";
+
+const SERVER_ADDRESS: &str = "https://tahinli.com.tr:2323";
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 enum Server{
@@ -75,13 +78,12 @@ async fn coin_status_check() -> Result<CoinStatus, reqwest::Error> {
 fn app() -> Element {
     rsx! {
         page_base {}
+        audio_stream_renderer {}
         div {
-            audio{  
-                    src:"https://radioxide.tahinli.com.tr:2323/stream",
-                    controls:true, 
-                    autoplay: true,
-                    muted:false,
-                    r#loop:true,
+            button {
+                onclick: move |_| record(),
+                "style":"width: 80px; height: 50px;",
+                "Sinusoidal"
             }
         }
         coin_status_renderer {}
@@ -104,6 +106,101 @@ fn page_base() ->Element {
         }
     }
 }
+
+pub async fn run<T>(device: &cpal::Device, config: &cpal::StreamConfig) -> Result<(), anyhow::Error>
+where
+    T: SizedSample + FromSample<f32>,
+{
+    let sample_rate = config.sample_rate.0 as f32;
+    let channels = config.channels as usize;
+
+    // Produce a sinusoid of maximum amplitude.
+    let mut sample_clock = 0f32;
+    let mut next_value = move || {
+        sample_clock = (sample_clock + 1.0) % sample_rate;
+        (sample_clock * 440.0 * 2.0 * std::f32::consts::PI / sample_rate).sin()
+    };
+
+    let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
+
+    let stream = device.build_output_stream(
+        config,
+        move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
+            write_data(data, channels, &mut next_value)
+        },
+        err_fn,
+        None,
+    )?;
+    stream.play()?;
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    Ok(())
+}
+
+fn write_data<T>(output: &mut [T], channels: usize, next_sample: &mut dyn FnMut() -> f32)
+where
+    T: Sample + FromSample<f32>,
+{
+    for frame in output.chunks_mut(channels) {
+        let value: T = T::from_sample(next_sample());
+        for sample in frame.iter_mut() {
+            *sample = value;
+        }
+    }
+}
+
+
+
+pub async fn record() {
+    log::info!("mic");
+    let host = cpal::default_host();
+    let devices = host.devices().unwrap();
+    for (_derive_index, device) in devices.enumerate() {
+        log::info!("{:?}", device.name());
+    }
+    let device = host.default_output_device().unwrap();
+
+    let mut supported_config = device.supported_output_configs().unwrap();
+    let config = supported_config.next().unwrap().with_max_sample_rate();
+    log::info!("{:?}", config);
+    match config.sample_format() {
+        cpal::SampleFormat::I8 => {log::info!("i8")},
+        cpal::SampleFormat::I16 => {log::info!("i16")},
+        //cpal::SampleFormat::I24 => {log::info!("i24")},
+        cpal::SampleFormat::I32 => {log::info!("i32")},
+        //cpal::SampleFormat::I48 => {log::info!("i48")},
+        cpal::SampleFormat::I64 => {log::info!("i64")},
+        cpal::SampleFormat::U8 => {log::info!("u8")},
+        cpal::SampleFormat::U16 => {log::info!("u16")},
+        //cpal::SampleFormat::U24 => {log::info!("u24")},
+        cpal::SampleFormat::U32 => {log::info!("u32")},
+        //cpal::SampleFormat::U48 => {log::info!("u48")},
+        cpal::SampleFormat::U64 => {log::info!("u64")},
+        cpal::SampleFormat::F32 => {log::info!("f32");
+        run::<f32>(&device, &config.clone().into()).await.unwrap();},
+        cpal::SampleFormat::F64 => {log::info!("f64")},
+        sample_format => panic!("Unsupported sample format '{sample_format}'"),
+    }
+    /*let config:StreamConfig = config.into();
+    let stream = device.build_output_stream(
+        &config, 
+        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+            
+            log::info!("{:?}", data);
+            //I need to do something here, I think
+        }, 
+        move |_err| {
+            
+        }, 
+        None).unwrap();
+    
+    stream.play().unwrap();
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    stream.pause().unwrap();*/
+
+    
+}
 fn server_status_renderer() -> Element {
     let server_check_time = 1_u64;
     let mut server_status = use_signal(move || ServerStatus{status:Server::Unstable,});
@@ -111,7 +208,7 @@ fn server_status_renderer() -> Element {
     let mut server_status_unstable = use_signal(move|| false);
     let _server_status_task:Coroutine<()> = use_coroutine(|_| async move {
         loop {
-            task::sleep(Duration::from_secs(server_check_time)).await;
+            tokio::time::sleep(Duration::from_secs(server_check_time)).await;
             *server_status_watchdog.write() = true;
             *server_status.write() = server_status_check(server_status).await;
             *server_status_watchdog.write() = false;
@@ -120,13 +217,13 @@ fn server_status_renderer() -> Element {
     let _server_status_watchdog_timer:Coroutine<()> = use_coroutine(|_| async move {
             let mut watchdog_counter = 0_i8;
             loop {  
-                task::sleep(Duration::from_secs(2*server_check_time+1)).await;
+                tokio::time::sleep(Duration::from_secs(2*server_check_time+1)).await;
                 if !server_status_watchdog() {
                     *server_status_unstable.write() = false;
                 }
                 if server_status_watchdog() {
                     for _i in 0..5 {
-                        task::sleep(Duration::from_secs(1)).await;
+                        tokio::time::sleep(Duration::from_secs(1)).await;
                         if server_status_watchdog() {
                             watchdog_counter += 1;
                         }
@@ -186,6 +283,19 @@ fn coin_status_renderer() -> Element {
                 ShowCoinStatus{ coin_status: coin_result().clone() }
             }
         }        
+    }
+}
+fn audio_stream_renderer() -> Element {
+    rsx! {
+        div {
+            audio{  
+                    src:"https://tahinli.com.tr:2323/stream",
+                    controls:true, 
+                    autoplay: true,
+                    muted:false,
+                    r#loop:true,
+            }
+        }
     }
 }
 #[component]
