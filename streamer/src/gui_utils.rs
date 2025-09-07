@@ -20,10 +20,15 @@ pub async fn connect(
         base_to_streaming_receiver,
         streaming_to_base_sender.clone(),
     ));
-    match streaming_to_base_receiver.recv().await {
+    let answer = streaming_to_base_receiver.recv().await;
+    drop(streaming_to_base_receiver);
+    match answer {
         Ok(_) => State::Connected,
         Err(err_val) => {
-            eprintln!("Error: Communication | Streaming to Base | {}", err_val);
+            eprintln!(
+                "Error: Communication | Streaming to Base | Recv | Connect | {}",
+                err_val
+            );
             State::Disconnected
         }
     }
@@ -33,11 +38,25 @@ pub async fn disconnect(
     mut streaming_to_base_receiver: Receiver<bool>,
     base_to_streaming_sender: Sender<bool>,
 ) -> State {
-    let _ = base_to_streaming_sender.send(false);
-    match streaming_to_base_receiver.recv().await {
+    match base_to_streaming_sender.send(false) {
+        Ok(_) => {}
+        Err(err_val) => {
+            eprint!(
+                "Error: Communication | Base to Streaming | Send | Disconnect | {}",
+                err_val
+            );
+        }
+    }
+    drop(base_to_streaming_sender);
+    let answer = streaming_to_base_receiver.recv().await;
+    drop(streaming_to_base_receiver);
+    match answer {
         Ok(_) => State::Disconnected,
         Err(err_val) => {
-            eprintln!("Error: Communication | Streaming to Base | {}", err_val);
+            eprintln!(
+                "Error: Communication | Streaming to Base | Recv | Disconnect | {}",
+                err_val
+            );
             State::Connected
         }
     }
@@ -55,10 +74,15 @@ pub async fn start_recording(
         base_to_recording_receiver,
     ));
 
-    match recording_to_base_receiver.recv().await {
+    let answer = recording_to_base_receiver.recv().await;
+    drop(recording_to_base_receiver);
+    match answer {
         Ok(_) => State::Recording,
         Err(err_val) => {
-            eprintln!("Error: Communication | Recording to Base | {}", err_val);
+            eprintln!(
+                "Error: Communication | Recording to Base | Recv | Start Rec | {}",
+                err_val
+            );
             State::StopRecording
         }
     }
@@ -68,11 +92,25 @@ pub async fn stop_recording(
     mut recording_to_base_receiver: Receiver<bool>,
     base_to_recording_sender: Sender<bool>,
 ) -> State {
-    let _ = base_to_recording_sender.send(false);
-    match recording_to_base_receiver.recv().await {
+    match base_to_recording_sender.send(false) {
+        Ok(_) => {}
+        Err(err_val) => {
+            eprint!(
+                "Error: Communication | Base to Recording | Send | Stop Rec | {}",
+                err_val
+            );
+        }
+    }
+    drop(base_to_recording_sender);
+    let answer = recording_to_base_receiver.recv().await;
+    drop(recording_to_base_receiver);
+    match answer {
         Ok(_) => State::StopRecording,
         Err(err_val) => {
-            eprintln!("Error: Communication | Recording to Base | {}", err_val);
+            eprintln!(
+                "Error: Communication | Recording to Base | Stop Rec | {}",
+                err_val
+            );
             State::Recording
         }
     }
@@ -103,7 +141,7 @@ pub async fn start_playing(
         },
         Err(err_val) => {
             eprint!(
-                "Error: Communication | Playing to Base | Recv | Start | {}",
+                "Error: Communication | Playing to Base | Recv | Start Play | {}",
                 err_val
             );
             State::StopAudio
@@ -119,7 +157,7 @@ pub async fn stop_playing(
         Ok(_) => {}
         Err(err_val) => {
             eprintln!(
-                "Error: Communication | Base to Playing | Stop | Send | {}",
+                "Error: Communication | Base to Playing | Send | Stop Play | {}",
                 err_val
             );
         }
@@ -135,7 +173,7 @@ pub async fn stop_playing(
         },
         Err(err_val) => {
             eprintln!(
-                "Error: Communication | Playing to Base | Recv | Stop | {}",
+                "Error: Communication | Playing to Base | Recv | Stop Play | {}",
                 err_val
             );
             State::PlayingAudio
@@ -150,7 +188,7 @@ pub async fn is_playing_finished(
     decoded_to_playing_sender: Sender<f32>,
 ) -> State {
     tokio::select! {
-        is_audio_finished = tokio::spawn(async move {
+        is_audio_finished = async move {
             match playing_to_base_receiver_is_audio_finished.recv().await {
                 Ok(state) => match state {
                     Player::Play => {
@@ -167,24 +205,24 @@ pub async fn is_playing_finished(
                     State::PlayingAudio
                 }
             }
-        }) => is_audio_finished.unwrap(),
-        is_audio_stopped = tokio::spawn(async move {
+        } => is_audio_finished,
+        is_audio_stopped = async move {
             loop {
                 match playing_to_base_receiver_is_audio_stopped.recv().await {
-                Ok(state) => if let Player::Stop = state {
-                    return State::StopAudio;
-                },
-                Err(err_val) => {
-                    eprintln!(
-                        "Error: Communication | Playing to Base | Recv | Is Stop | {}",
-                        err_val
-                    );
-                    return State::PlayingAudio;
+                    Ok(state) => if let Player::Stop = state {
+                        return State::StopAudio;
+                    },
+                    Err(err_val) => {
+                        eprintln!(
+                            "Error: Communication | Playing to Base | Recv | Is Stop | {}",
+                            err_val
+                        );
+                        return State::PlayingAudio;
+                    }
                 }
             }
         }
-        })
-            =>is_audio_stopped.unwrap(),
+            =>is_audio_stopped,
     }
 }
 
@@ -196,7 +234,7 @@ pub async fn pause_playing(
         Ok(_) => {}
         Err(err_val) => {
             eprintln!(
-                "Error: Communication | Base to Playing | Pause | Send | {}",
+                "Error: Communication | Base to Playing | Pause Play | Send | {}",
                 err_val
             );
         }
@@ -212,7 +250,7 @@ pub async fn pause_playing(
         },
         Err(err_val) => {
             eprintln!(
-                "Error: Communication | Playing to Base | Recv | Pause | {}",
+                "Error: Communication | Playing to Base | Recv | Pause Play | {}",
                 err_val
             );
             State::PlayingAudio
@@ -228,7 +266,7 @@ pub async fn continue_playing(
         Ok(_) => {}
         Err(err_val) => {
             eprintln!(
-                "Error: Communication | Base to Playing | Send | Continue | {}",
+                "Error: Communication | Base to Playing | Send | Continue Play | {}",
                 err_val
             );
         }
@@ -244,7 +282,7 @@ pub async fn continue_playing(
         },
         Err(err_val) => {
             eprintln!(
-                "Error: Communication | Playing to Base | Continue | {}",
+                "Error: Communication | Playing to Base | Continue Play | {}",
                 err_val
             );
             State::PausedAudio
