@@ -194,13 +194,14 @@ impl Streamer {
                         .streaming_to_base_is_finished
                         .clone();
 
-                    let streaming_to_base_receiver_is_streaming_stopped = self
-                        .communication_channel
-                        .recording_to_base_sender
-                        .subscribe();
                     let streaming_to_base_receiver_is_streaming_finished = self
                         .communication_channel
                         .streaming_to_base_is_finished
+                        .subscribe();
+
+                    let streaming_to_base_receiver_is_streaming_stopped = self
+                        .communication_channel
+                        .streaming_to_base_sender
                         .subscribe();
 
                     let connect_command = Command::perform(
